@@ -1,0 +1,1078 @@
+import { MISSIONS } from "../data/missions";
+import { NATIONS } from "../data/nations";
+import { EPILOGUE, actIntro, generalDefeat } from "../data/story";
+import { BROTHER, WEAPONS, WEAPON_ORDER } from "../data/weapons";
+import { generalsSlain, nextMission, unlockedWeapons, writeSave, xpNeed } from "../save";
+import type { ComicPage, GameEvent, HudState, Mission, NationId, SaveData, Stealth, WeaponId, ZoneId } from "../types";
+import {
+  MAX_STAMINA,
+  MAX_STIMS,
+  canBuffer,
+  drinkStim,
+  finisherTarget,
+  hurtPlayer,
+  idleAct,
+  pressGuard,
+  startAttack,
+  startDodge,
+  startFinisher,
+  updateAct,
+} from "./combat";
+import { alert, makeBoss, makeEnemy, makeObject, updateEnemies } from "./enemies";
+import { Input, type Action } from "./input";
+import { dist, inRect, segHitsRect, type Active, type Bubble, type Burst, type Enemy, type Floater, type Npc, type Pickup, type Player, type Rect, type Shot, type Vec, type Zone } from "./state";
+import { buildZone } from "./world";
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const PLAYER_R = 0.4;
+
+const makeNpc = (name: string, role: Npc["role"], x: number, y: number, look: Npc["look"] = "villager", hp = 1): Npc => ({
+  name,
+  role,
+  look,
+  x,
+  y,
+  hp,
+  maxHp: hp,
+  facing: Math.PI / 2,
+  home: { x, y },
+  t: Math.random() * 4,
+  walk: 0,
+});
+
+/** The world simulation: the hero, enemies, missions and the frame loop. Rendering lives elsewhere. */
+export class Game {
+  zone!: Zone;
+  /** Increments whenever the zone is rebuilt, so the renderer knows to rebuild its scene. */
+  zoneVersion = 0;
+  player: Player;
+  enemies: Enemy[] = [];
+  shots: Shot[] = [];
+  npcs: Npc[] = [];
+  pickups: Pickup[] = [];
+  bursts: Burst[] = [];
+  floaters: Floater[] = [];
+  bubbles: Bubble[] = [];
+  active: Active | null = null;
+  input = new Input();
+  paused = false;
+  time = 0;
+  ids = 1;
+  /** Whose eyes the player sees through: Ren, or a brother during a Memory mission. */
+  hero: WeaponId = "katana";
+  lock: Enemy | null = null;
+  /** The lock was taken by attacking (not by the lock key), so it lets go once the fight moves on. */
+  lockAuto = false;
+  lastSwing = -99;
+  prompt: { text: string; run: () => void } | null = null;
+  /** Camera heading, in radians on the ground plane. */
+  camYaw = 0;
+  /** Freezes the simulation for a few frames when a heavy blow lands. */
+  hitstop = 0;
+  shakeAmt = 0;
+  /** Close-up camera for takedowns and a general's entrance. */
+  cine: { t: number; on: Vec } | null = null;
+  /** Called every frame after the simulation, with the real time step. */
+  onFrame: ((dt: number) => void) | null = null;
+
+  private solids: Rect[] = [];
+  private raf = 0;
+  private last = 0;
+  private hudT = 0;
+  private slowT = 0;
+  private deathT = 0;
+  private campT: number[] = [];
+
+  constructor(
+    readonly save: SaveData,
+    private emit: (e: GameEvent) => void,
+    private onHud: (h: HudState) => void,
+  ) {
+    this.player = {
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      facing: 0,
+      hp: 1,
+      maxHp: 1,
+      stamina: MAX_STAMINA,
+      maxStamina: MAX_STAMINA,
+      staminaT: 0,
+      weapon: unlockedWeapons(save).includes(save.weapon) ? save.weapon : "katana",
+      act: idleAct(),
+      combo: 0,
+      comboT: 0,
+      buffer: null,
+      bufferT: 0,
+      specialCd: 0,
+      stims: MAX_STIMS,
+      parryT: 0,
+      blocking: false,
+      counterT: 0,
+      invuln: 0,
+      lastHurt: -10,
+      flash: 0,
+      crouch: false,
+      speed: 0,
+      walk: 0,
+    };
+    this.loadZone(save.nation);
+  }
+
+  // ---------- Lifecycle ----------
+
+  start() {
+    this.input.attach();
+    this.last = performance.now();
+    const loop = (ts: number) => {
+      // Real time drives the game even when frames are slow: long frames are split into
+      // small sub-steps instead of being clipped, so nothing ever runs in slow motion.
+      const real = Math.min(0.1, (ts - this.last) / 1000);
+      this.last = ts;
+      if (this.paused) this.input.queue.length = 0;
+      else {
+        let left = real;
+        while (left > 1e-4) {
+          const h = Math.min(1 / 30, left);
+          this.step(h);
+          left -= h;
+        }
+      }
+      this.onFrame?.(real);
+      this.raf = requestAnimationFrame(loop);
+    };
+    this.raf = requestAnimationFrame(loop);
+    if (!this.save.visited.includes(this.save.nation)) this.firstVisit();
+    this.pushHud();
+  }
+
+  stop() {
+    cancelAnimationFrame(this.raf);
+    this.input.detach();
+  }
+
+  act(a: Action) {
+    this.input.queue.push(a);
+  }
+
+  /** Advances the world by one real-time step, honouring hit-stop and slow motion. */
+  step(real: number) {
+    this.shakeAmt = Math.max(0, this.shakeAmt - real * 1.6);
+    if (this.cine) {
+      this.cine.t -= real;
+      if (this.cine.t <= 0) this.cine = null;
+    }
+    if (this.hitstop > 0) {
+      this.hitstop -= real;
+      return;
+    }
+    let dt = real;
+    if (this.slowT > 0) {
+      this.slowT -= real;
+      dt *= 0.35;
+    }
+    this.update(dt);
+  }
+
+  // ---------- Derived stats ----------
+
+  generals() {
+    return generalsSlain(this.save);
+  }
+
+  maxHp() {
+    return 100 + 8 * (this.save.level - 1);
+  }
+
+  pdmg() {
+    return 20 * (1 + 0.06 * (this.save.level - 1));
+  }
+
+  get memory() {
+    return this.zone.id === "memory";
+  }
+
+  weapons(): WeaponId[] {
+    return this.memory ? [this.hero] : unlockedWeapons(this.save);
+  }
+
+  // ---------- Zones and travel ----------
+
+  private loadZone(id: ZoneId) {
+    const nation = this.save.nation;
+    this.zone = buildZone(id, nation, this.save.done.includes(`${nation}-7`));
+    this.zoneVersion++;
+    this.refreshSolids();
+    this.enemies = [];
+    this.shots = [];
+    this.npcs = [];
+    this.pickups = [];
+    this.bubbles = [];
+    this.bursts = [];
+    this.floaters = [];
+    this.lock = null;
+    this.respawn();
+    if (id === "memory") return;
+    const v = this.zone.pois.village;
+    this.npcs.push(
+      makeNpc(NATIONS[nation].giver, "giver", v.x - 2, v.y - 2),
+      makeNpc("The Biwa Woman", "biwa", v.x + 5, v.y - 2.5, "biwa"),
+      makeNpc("Survivor", "villager", v.x - 5, v.y + 3),
+      makeNpc("Survivor", "villager", v.x + 3, v.y + 5),
+    );
+    this.campT = this.zone.camps.map(() => 0);
+    this.zone.camps.forEach((_, i) => this.spawnCamp(i));
+  }
+
+  private refreshSolids() {
+    const z = this.zone;
+    this.solids = [...z.buildings, ...z.walls, ...z.cover, ...(z.gate ? [z.gate] : [])];
+  }
+
+  private respawn() {
+    const v = this.zone.pois.village;
+    const p = this.player;
+    p.x = v.x + 1.5;
+    p.y = v.y + 2.5;
+    p.vx = p.vy = 0;
+    p.maxHp = this.maxHp();
+    p.hp = p.maxHp;
+    p.stamina = MAX_STAMINA;
+    p.stims = MAX_STIMS;
+    p.act = idleAct();
+    p.invuln = 1;
+    p.facing = 0;
+    p.crouch = false;
+    this.camYaw = 0;
+    this.lock = null;
+    this.deathT = 0;
+  }
+
+  private spawnCamp(i: number) {
+    const c = this.zone.camps[i];
+    (["melee", "melee", "ranged"] as const).forEach((arch) => {
+      this.enemies.push(makeEnemy(this, arch, this.spot(c, 1.5, 5), { camp: i }));
+    });
+  }
+
+  private firstVisit() {
+    const id = this.save.nation;
+    this.save.visited.push(id);
+    writeSave(this.save);
+    this.comic(actIntro(id), () => this.toast(NATIONS[id].name, `Find ${NATIONS[id].giver} at the hideout.`));
+  }
+
+  travel(nation: NationId) {
+    this.abandon();
+    this.save.nation = nation;
+    writeSave(this.save);
+    this.loadZone(nation);
+    if (!this.save.visited.includes(nation)) this.firstVisit();
+    this.emit({ type: "progress" });
+  }
+
+  /** Back to the hideout at once. In a memory this abandons the mission. */
+  returnToVillage() {
+    if (this.memory) {
+      this.abandon();
+      this.toast("The memory fades", "The mission can be taken again at the hideout.");
+      return;
+    }
+    if (this.enemies.some((e) => e.aware && e.state !== "dead" && dist(e, this.player) < 20)) {
+      this.toast("Not while you are hunted", "Lose your pursuers first.");
+      return;
+    }
+    this.respawn();
+    this.shots = [];
+  }
+
+  // ---------- Missions ----------
+
+  accept(m: Mission) {
+    this.comic([m.intro], () => this.begin(m));
+  }
+
+  private begin(m: Mission) {
+    if (m.cls === "Memory") {
+      this.hero = m.playAs ?? "katana";
+      this.loadZone("memory");
+      this.player.weapon = this.hero;
+    }
+    this.active = { m, i: 0, got: 0, need: 1, wave: 0, waveT: 0, started: false, friend: null, ambush: 0 };
+    this.enterStep(0);
+    this.emit({ type: "progress" });
+  }
+
+  private clearMission() {
+    this.enemies = this.enemies.filter((e) => !e.mission);
+    this.npcs = this.npcs.filter((n) => n.role !== "friend");
+    this.pickups = [];
+    this.shots = [];
+    if (this.lock && !this.enemies.includes(this.lock)) this.lock = null;
+  }
+
+  private abandon() {
+    if (!this.active && !this.memory) return;
+    this.active = null;
+    this.clearMission();
+    if (this.memory) this.leaveMemory();
+  }
+
+  private leaveMemory() {
+    this.hero = "katana";
+    this.loadZone(this.save.nation);
+    this.player.weapon = unlockedWeapons(this.save).includes(this.save.weapon) ? this.save.weapon : "katana";
+  }
+
+  /** The hero fell or the mission failed: back to the start of the mission. */
+  private restart(title: string, text: string) {
+    this.toast(title, text);
+    const a = this.active;
+    this.clearMission();
+    // Camps forget the hero and return to their rounds.
+    for (const e of this.enemies) {
+      if (e.state === "dead") continue;
+      Object.assign(e, { aware: false, suspicion: 0, state: "patrol", token: false, x: e.home.x, y: e.home.y, hp: e.maxHp });
+    }
+    this.respawn();
+    if (a) {
+      this.active = { ...a, friend: null };
+      this.enterStep(0);
+    }
+  }
+
+  die() {
+    const p = this.player;
+    p.hp = 0;
+    p.act = { ...idleAct(), kind: "broken", dur: 99 };
+    this.deathT = 2.4;
+    this.slow(1.2);
+    this.lock = null;
+  }
+
+  private enterStep(i: number) {
+    const a = this.active;
+    if (!a) return;
+    const s = a.m.steps[i];
+    if (a.friend) this.npcs = this.npcs.filter((n) => n !== a.friend);
+    Object.assign(a, { i, got: 0, need: 1, wave: 0, waveT: 0, started: false, friend: null, ambush: 0 });
+    const at = this.zone.pois[s.kind === "escort" ? s.from : s.at];
+    const friendHp = Math.round(220 * (1 + 0.35 * this.generals()));
+    const guards = (count: number) => {
+      for (let k = 0; k < count; k++) {
+        this.enemies.push(makeEnemy(this, k % 3 === 2 ? "ranged" : "melee", this.spot(at, 3, 11), { mission: true }));
+      }
+    };
+    switch (s.kind) {
+      case "kill":
+        a.need = s.count;
+        for (let k = 0; k < s.count; k++) {
+          const lead = !!s.elite && k === 0;
+          const arch = s.elite && !lead && s.enemy === "brute" ? "melee" : s.enemy;
+          this.enemies.push(makeEnemy(this, arch, this.spot(at, 1.5, 9), { mission: true, step: true, elite: lead ? s.elite : undefined }));
+        }
+        break;
+      case "collect":
+        a.need = s.count;
+        for (let k = 0; k < s.count; k++) this.pickups.push({ ...this.spot(at, 3, 14), label: s.item, taken: false });
+        guards(s.guards);
+        break;
+      case "destroy":
+        a.need = s.count;
+        for (let k = 0; k < s.count; k++) this.enemies.push(makeObject(this, s.target, this.spot(at, 2, 10)));
+        guards(s.guards);
+        break;
+      case "escort":
+        a.need = 0;
+        a.friend = makeNpc(s.npc, "friend", at.x, at.y, "villager", friendHp);
+        this.npcs.push(a.friend);
+        break;
+      case "defend":
+        a.need = s.waves;
+        a.friend = makeNpc(s.npc, "friend", at.x, at.y, /barge|cart|boat|crowd|cargo/i.test(s.npc) ? "cargo" : "villager", friendHp * 1.5);
+        this.npcs.push(a.friend);
+        break;
+      case "survive":
+        a.need = s.waves;
+        break;
+      case "boss":
+        this.enemies.push(makeBoss(this, at));
+        break;
+      case "reach":
+        a.need = 0;
+        break;
+    }
+    if (s.say) this.say(s.say, this.player);
+  }
+
+  private nextStep() {
+    const a = this.active;
+    if (!a) return;
+    if (a.i + 1 >= a.m.steps.length) this.complete();
+    else this.enterStep(a.i + 1);
+  }
+
+  private spawnWave(center: Vec, w: number, step: boolean) {
+    const list: ("melee" | "fast" | "ranged" | "brute")[] = ["fast"];
+    for (let k = 0; k < 1 + Math.floor(w / 2); k++) list.push("melee");
+    if (w >= 1) list.push("ranged");
+    if (w >= 3) list.push("brute");
+    for (const arch of list) {
+      this.enemies.push(makeEnemy(this, arch, this.spot(center, 15, 21), { mission: true, step, chase: true }));
+    }
+  }
+
+  private updateMission(dt: number) {
+    const a = this.active;
+    if (!a) return;
+    const s = a.m.steps[a.i];
+    const p = this.player;
+    const pois = this.zone.pois;
+    const alive = this.enemies.filter((e) => e.step && e.state !== "dead").length;
+    switch (s.kind) {
+      case "reach":
+        if (dist(p, pois[s.at]) < 5.5) this.nextStep();
+        break;
+      case "kill":
+      case "destroy":
+        a.got = a.need - alive;
+        if (!alive) this.nextStep();
+        break;
+      case "boss":
+        if (!alive) {
+          this.enemies = this.enemies.filter((e) => !e.mission || e.state === "dead");
+          this.nextStep();
+        }
+        break;
+      case "collect":
+        for (const pk of this.pickups) {
+          if (!pk.taken && dist(p, pk) < 1.6) {
+            pk.taken = true;
+            a.got++;
+            this.float(pk, `${pk.label} ${a.got}/${a.need}`, "#ff8a1f");
+          }
+        }
+        if (a.got >= a.need) this.nextStep();
+        break;
+      case "escort": {
+        const f = a.friend;
+        if (!f) break;
+        if (f.hp <= 0) return this.restart("Mission failed", `${s.npc} has fallen. Ren returns to the hideout.`);
+        const to = pois[s.to];
+        const d = dist(f, to);
+        const threat = this.enemies.some((e) => e.mission && e.state !== "dead" && dist(e, f) < 12);
+        if (!threat && dist(p, f) < 15 && d > 3) {
+          f.facing = Math.atan2(to.y - f.y, to.x - f.x);
+          const before = { x: f.x, y: f.y };
+          this.moveBody(f, Math.cos(f.facing) * 3 * dt, Math.sin(f.facing) * 3 * dt, 0.4);
+          f.walk += dist(before, f);
+        }
+        const frac = 1 - d / (dist(pois[s.from], to) || 1);
+        if (a.ambush < s.waves && frac > (a.ambush + 1) / (s.waves + 1)) {
+          this.spawnWave({ x: f.x + Math.cos(f.facing) * 6, y: f.y + Math.sin(f.facing) * 6 }, a.ambush, false);
+          a.ambush++;
+          this.say(`${s.npc}: Ambush!`, f);
+        }
+        if (d < 4) this.nextStep();
+        break;
+      }
+      case "defend":
+      case "survive": {
+        const c = pois[s.at];
+        if (a.friend && a.friend.hp <= 0 && s.kind === "defend") {
+          return this.restart("Mission failed", `${s.npc} was lost. Ren returns to the hideout.`);
+        }
+        if (!a.started) {
+          if (dist(p, c) < 16) {
+            a.started = true;
+            this.spawnWave(c, 0, true);
+          }
+          break;
+        }
+        if (alive) break;
+        a.waveT += dt;
+        if (a.waveT > 2.5) {
+          a.waveT = 0;
+          a.wave++;
+          a.got = a.wave;
+          if (a.wave >= s.waves) this.nextStep();
+          else this.spawnWave(c, a.wave, true);
+        }
+        break;
+      }
+    }
+  }
+
+  private complete() {
+    const a = this.active;
+    if (!a) return;
+    const m = a.m;
+    this.active = null;
+    this.clearMission();
+    if (!this.save.done.includes(m.id)) this.save.done.push(m.id);
+    this.gainXp(70 + 14 * m.n + 30 * this.generals());
+    this.player.stims = MAX_STIMS;
+    if (this.memory) this.leaveMemory();
+    const pages: ComicPage[] = m.outro.length ? [m.outro] : [];
+    const general = m.cls === "General";
+    const finale = general && this.generals() === 5;
+    if (general) pages.push(...generalDefeat(m.nation));
+    if (finale) pages.push(...EPILOGUE);
+    if (m.n === 7 && this.zone.gate) {
+      this.zone.gate = null;
+      this.refreshSolids();
+      this.zoneVersion++;
+    }
+    writeSave(this.save);
+    this.comic(pages, () => {
+      const reward = general ? NATIONS[m.nation].reward : undefined;
+      if (reward) this.toast(`${WEAPONS[reward].owner}'s ${WEAPONS[reward].name} recovered`, `${WEAPONS[reward].role} Press ${WEAPON_ORDER.indexOf(reward) + 1} to wield it.`);
+      else this.toast("Mission complete", m.title);
+      this.emit({ type: finale ? "ending" : "progress" });
+    });
+  }
+
+  /** The point the objective marker leads to. */
+  objectivePoint(): Vec | null {
+    const a = this.active;
+    if (!a) return null;
+    const s = a.m.steps[a.i];
+    const p = this.player;
+    const nearest = <T extends Vec>(list: T[]) => list.reduce<T | null>((best, e) => (!best || dist(p, e) < dist(p, best) ? e : best), null);
+    switch (s.kind) {
+      case "reach":
+      case "defend":
+      case "survive":
+        return this.zone.pois[s.at];
+      case "collect":
+        return nearest(this.pickups.filter((k) => !k.taken)) ?? this.zone.pois[s.at];
+      case "escort":
+        return a.friend && dist(p, a.friend) > 15 ? a.friend : this.zone.pois[s.to];
+      default:
+        return nearest(this.enemies.filter((e) => e.step && e.state !== "dead")) ?? this.zone.pois[s.at];
+    }
+  }
+
+  // ---------- Helpers used by enemies, combat and steps ----------
+
+  /** A free point near a centre. Inside the fortress, points stay in the same room. */
+  spot(center: Vec, rMin: number, rMax: number): Vec {
+    const z = this.zone;
+    const inFort = !!z.fortress && inRect(center, z.fortress);
+    const inHall = !!z.hall && inRect(center, z.hall);
+    const k = inFort ? 0.55 : 1;
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = (rMin + Math.random() * (rMax - rMin)) * k;
+      const pt = { x: center.x + Math.cos(a) * r, y: center.y + Math.sin(a) * r };
+      if (pt.x < 2.5 || pt.y < 2.5 || pt.x > z.w - 2.5 || pt.y > z.h - 2.5) continue;
+      if (z.fortress && inRect(pt, z.fortress, 1.5) !== inFort) continue;
+      if (z.hall && inRect(pt, z.hall) !== inHall) continue;
+      if (this.solids.some((s) => inRect(pt, s, 1))) continue;
+      return pt;
+    }
+    return { x: center.x, y: center.y };
+  }
+
+  moveBody(b: Vec, dx: number, dy: number, r: number, sub = 0.3) {
+    const z = this.zone;
+    const n = Math.max(1, Math.ceil(Math.hypot(dx, dy) / sub));
+    for (let i = 0; i < n; i++) {
+      b.x = clamp(b.x + dx / n, 1.5, z.w - 1.5);
+      b.y = clamp(b.y + dy / n, 1.5, z.h - 1.5);
+      for (const s of this.solids) {
+        if (b.x < s.x - r || b.x > s.x + s.w + r || b.y < s.y - r || b.y > s.y + s.h + r) continue;
+        const cx = clamp(b.x, s.x, s.x + s.w);
+        const cy = clamp(b.y, s.y, s.y + s.h);
+        const ox = b.x - cx;
+        const oy = b.y - cy;
+        const d = Math.hypot(ox, oy);
+        if (d >= r) continue;
+        if (d > 0.0001) {
+          b.x = cx + (ox / d) * r;
+          b.y = cy + (oy / d) * r;
+        } else {
+          // Inside the rectangle: leave by the nearest side.
+          const opts = [
+            [s.x - r - b.x, 0],
+            [s.x + s.w + r - b.x, 0],
+            [0, s.y - r - b.y],
+            [0, s.y + s.h + r - b.y],
+          ];
+          opts.sort((u, v) => Math.abs(u[0] + u[1]) - Math.abs(v[0] + v[1]));
+          b.x += opts[0][0];
+          b.y += opts[0][1];
+        }
+      }
+    }
+  }
+
+  /** Whether a can see b. Cars and barriers hide a crouching body. */
+  lineOfSight(a: Vec, b: Vec, low: boolean) {
+    const z = this.zone;
+    for (const r of z.buildings) if (segHitsRect(a, b, r)) return false;
+    for (const r of z.walls) if (segHitsRect(a, b, r)) return false;
+    if (z.gate && segHitsRect(a, b, z.gate)) return false;
+    if (low) for (const r of z.cover) if (segHitsRect(a, b, r)) return false;
+    return true;
+  }
+
+  clampToArena(e: Enemy) {
+    const z = this.zone;
+    const area = z.hall && inRect(e.home, z.hall, 2) ? z.hall : { x: 0, y: 0, w: z.w, h: z.h };
+    const m = e.radius + 0.6;
+    e.x = clamp(e.x, area.x + m, area.x + area.w - m);
+    e.y = clamp(e.y, area.y + m, area.y + area.h - m);
+  }
+
+  targetFor(e: Enemy): Vec {
+    const f = this.active?.friend;
+    return f && e.mission && f.hp > 0 && dist(e, f) < dist(e, this.player) ? f : this.player;
+  }
+
+  hitFriends(e: Enemy, test: (p: Vec, r: number) => boolean, dmg: number, perilous: boolean) {
+    if (test(this.player, PLAYER_R)) hurtPlayer(this, dmg, e, perilous, e);
+    const f = this.active?.friend;
+    if (f && f.hp > 0 && test(f, 0.5)) {
+      f.hp -= dmg * 0.6;
+      this.float(f, `${Math.round(dmg * 0.6)}`, "#e0102a");
+    }
+  }
+
+  kill(e: Enemy, by: "takedown" | "blow") {
+    e.state = "dead";
+    e.deadT = 0;
+    e.killedBy = by;
+    e.token = false;
+    if (this.lock === e) {
+      // Mid-fight, the lock passes to the next attacker close by.
+      const next = this.lockAuto ? this.engageTarget(this.player.facing, 9, e) : null;
+      this.lock = next;
+      if (!next) this.lockAuto = false;
+    }
+    if (e.object) this.burst({ k: "shatter", x: e.x, y: e.y, n: 22, dir: 0 });
+    if (e.xp) this.gainXp(e.xp);
+  }
+
+  burst(b: Burst) {
+    this.bursts.push(b);
+  }
+
+  shake(n: number) {
+    this.shakeAmt = Math.max(this.shakeAmt, n);
+  }
+
+  slow(t: number) {
+    this.slowT = Math.max(this.slowT, t);
+  }
+
+  cinematic(t: number, on: Vec) {
+    this.cine = { t, on };
+  }
+
+  bossIntro(e: Enemy) {
+    const g = NATIONS[this.zone.nation].general;
+    this.cinematic(2.4, e);
+    this.slow(0.6);
+    this.float(e, `${g.name}, ${g.title}`, "#e0102a", true);
+  }
+
+  float(at: Vec, text: string, color: string, big = false) {
+    this.floaters.push({ x: at.x + (Math.random() - 0.5) * 0.6, y: at.y, text, t: 0, color, big });
+  }
+
+  say(line: string, on: Vec) {
+    const idx = line.indexOf(": ");
+    const speaker = idx > 0 ? line.slice(0, idx) : "";
+    const text = idx > 0 ? line.slice(idx + 2) : line;
+    this.bubbles = this.bubbles.filter((b) => b.on !== on);
+    this.bubbles.push({ speaker, text, t: 3 + text.length * 0.045, ghost: /voice/i.test(speaker), on });
+  }
+
+  private toast(title: string, text?: string) {
+    this.emit({ type: "toast", title, text });
+  }
+
+  private comic(pages: ComicPage[], then: () => void) {
+    if (!pages.length) return then();
+    this.emit({ type: "comic", pages, then });
+  }
+
+  // ---------- Player ----------
+
+  private gainXp(n: number) {
+    const s = this.save;
+    s.xp += n;
+    while (s.xp >= xpNeed(s.level)) {
+      s.xp -= xpNeed(s.level);
+      s.level++;
+      this.player.maxHp = this.maxHp();
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + 20);
+      this.float(this.player, `Level ${s.level}`, "#ff8a1f", true);
+    }
+  }
+
+  /** Desired movement in world space, from keys or stick, relative to the camera. */
+  moveInput(): Vec {
+    const ax = this.input.axis();
+    const fx = Math.cos(this.camYaw);
+    const fy = Math.sin(this.camYaw);
+    return { x: -fy * ax.x + fx * ax.y, y: fx * ax.x + fy * ax.y };
+  }
+
+  setWeapon(id: WeaponId) {
+    const p = this.player;
+    if (!this.weapons().includes(id) || p.act.kind !== "idle" || p.weapon === id) return;
+    p.weapon = id;
+    p.combo = 0;
+    if (!this.memory) {
+      this.save.weapon = id;
+      writeSave(this.save);
+    }
+  }
+
+  /** The fighter an attack should turn towards: close, in sight and roughly ahead. */
+  engageTarget(dir: number, range = 11, skip: Enemy | null = null): Enemy | null {
+    const p = this.player;
+    let best: Enemy | null = null;
+    let score = Infinity;
+    for (const e of this.enemies) {
+      if (e === skip || e.state === "dead" || e.object) continue;
+      const d = dist(p, e);
+      if (d > range || !this.lineOfSight(p, e, false)) continue;
+      const a = Math.atan2(e.y - p.y, e.x - p.x) - dir;
+      const off = Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+      if (off > 1.9 && d > 4) continue;
+      const s = d + off * 4 - (e.aware ? 2 : 0);
+      if (s < score) {
+        score = s;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  toggleLock() {
+    this.lockAuto = false;
+    if (this.lock) {
+      this.lock = null;
+      return;
+    }
+    const p = this.player;
+    let best: Enemy | null = null;
+    let score = Infinity;
+    for (const e of this.enemies) {
+      if (e.state === "dead" || e.object) continue;
+      const d = dist(p, e);
+      if (d > 20 || !this.lineOfSight(p, e, false)) continue;
+      const off = Math.abs(Math.atan2(Math.sin(Math.atan2(e.y - p.y, e.x - p.x) - this.camYaw), Math.cos(Math.atan2(e.y - p.y, e.x - p.x) - this.camYaw)));
+      const s = d + off * 8;
+      if (s < score) {
+        score = s;
+        best = e;
+      }
+    }
+    this.lock = best;
+  }
+
+  private handle(action: Action) {
+    const p = this.player;
+    if (p.hp <= 0) return;
+    const busy = p.act.kind !== "idle";
+    const attackTail = p.act.kind === "attack" && p.act.move && p.act.landed >= (p.act.move.hits ?? 1);
+    switch (action) {
+      case "light":
+      case "heavy":
+      case "special":
+        if (!busy) startAttack(this, action);
+        else if (canBuffer(this)) {
+          p.buffer = action;
+          p.bufferT = 0.6;
+        }
+        break;
+      case "dodge":
+        if (!busy || attackTail) startDodge(this);
+        else if (canBuffer(this)) {
+          p.buffer = "dodge";
+          p.bufferT = 0.35;
+        }
+        break;
+      case "guard":
+        pressGuard(this);
+        break;
+      case "stim":
+        drinkStim(this);
+        break;
+      case "crouch":
+        p.crouch = !p.crouch;
+        break;
+      case "lock":
+        this.toggleLock();
+        break;
+      case "interact":
+        this.prompt?.run();
+        break;
+      case "weapon1":
+      case "weapon2":
+      case "weapon3":
+      case "weapon4":
+        this.setWeapon(WEAPON_ORDER[Number(action.slice(-1)) - 1]);
+        break;
+    }
+  }
+
+  private updatePlayer(dt: number) {
+    const p = this.player;
+    const inp = this.input;
+    for (const action of inp.queue.splice(0)) this.handle(action);
+
+    p.parryT = Math.max(0, p.parryT - dt);
+    p.counterT = Math.max(0, p.counterT - dt);
+    p.invuln = Math.max(0, p.invuln - dt);
+    p.flash = Math.max(0, p.flash - dt);
+    p.comboT = Math.max(0, p.comboT - dt);
+    p.specialCd = Math.max(0, p.specialCd - dt);
+    p.bufferT -= dt;
+    if (p.bufferT <= 0) p.buffer = null;
+    if (p.comboT <= 0 && p.act.kind !== "attack") p.combo = 0;
+
+    const free = p.hp > 0 && updateAct(this, dt);
+    if (free && p.buffer) {
+      const b = p.buffer;
+      p.buffer = null;
+      if (b === "dodge") startDodge(this);
+      else startAttack(this, b);
+    }
+
+    p.blocking = free && p.act.kind === "idle" && inp.guarding();
+    const want = this.moveInput();
+    const mag = Math.hypot(want.x, want.y);
+    // A lock taken by attacking lets go when the hero sprints off or stops fighting for a while.
+    if (this.lock && this.lockAuto && p.act.kind === "idle" && ((inp.sprinting() && mag > 0.1) || this.time - this.lastSwing > 4.5)) {
+      this.lock = null;
+      this.lockAuto = false;
+    }
+    const sprint = !p.crouch && !p.blocking && inp.sprinting() && p.stamina > 1 && !this.lock;
+    let speed = p.blocking ? 2.6 : p.crouch ? 3.3 : sprint ? 8.8 : 6;
+    if (this.lock && !sprint) speed = Math.min(speed, 4.8);
+    const tvx = free ? want.x * speed : 0;
+    const tvy = free ? want.y * speed : 0;
+    // Heavy body: velocity eases towards the wish, faster when stopping.
+    const k = 1 - Math.pow(mag > 0.1 ? 0.00003 : 0.000004, dt);
+    p.vx += (tvx - p.vx) * k;
+    p.vy += (tvy - p.vy) * k;
+    if (free) {
+      const before = { x: p.x, y: p.y };
+      this.moveBody(p, p.vx * dt, p.vy * dt, PLAYER_R);
+      const moved = dist(before, p);
+      p.walk += moved;
+      p.speed = moved / dt;
+    } else {
+      p.speed = 0;
+      p.vx = p.vy = 0;
+    }
+    if (sprint && p.speed > 4.5) {
+      p.stamina -= 14 * dt;
+      p.staminaT = this.time + 0.5;
+      if (p.crouch) p.crouch = false;
+    }
+
+    // Facing: towards the lock target, else towards travel.
+    if (free) {
+      let want: number | null = null;
+      if (this.lock) want = Math.atan2(this.lock.y - p.y, this.lock.x - p.x);
+      else if (mag > 0.1) want = Math.atan2(p.vy, p.vx);
+      if (want !== null) {
+        const d = Math.atan2(Math.sin(want - p.facing), Math.cos(want - p.facing));
+        p.facing += clamp(d, -dt * 15, dt * 15);
+      }
+    }
+
+    // Stamina: recovers after a pause, slower while guarding.
+    if (this.time > p.staminaT) p.stamina = Math.min(p.maxStamina, p.stamina + dt * (p.blocking ? 14 : 34));
+    p.stamina = Math.max(-20, p.stamina);
+
+    // Out of combat, wounds slowly close.
+    const hunted = this.enemies.some((e) => e.aware && e.state !== "dead" && !e.object && dist(e, p) < 25);
+    if (!hunted && p.hp > 0 && this.time - p.lastHurt > 8) p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.03 * dt);
+  }
+
+  private updateCamera(dt: number) {
+    const inp = this.input;
+    const k = inp.keys;
+    this.camYaw += inp.look.x * 0.004;
+    inp.look.x = 0;
+    inp.look.y = 0;
+    const turn = (k.has("arrowright") ? 1 : 0) - (k.has("arrowleft") ? 1 : 0);
+    this.camYaw += turn * dt * 2.2;
+    const t = this.lock;
+    if (t) {
+      if (t.state === "dead" || dist(t, this.player) > 24) this.lock = null;
+      else {
+        const want = Math.atan2(t.y - this.player.y, t.x - this.player.x);
+        const d = Math.atan2(Math.sin(want - this.camYaw), Math.cos(want - this.camYaw));
+        this.camYaw += d * Math.min(1, dt * 6);
+      }
+    }
+  }
+
+  // ---------- Frame update ----------
+
+  private update(dt: number) {
+    this.time += dt;
+    const p = this.player;
+
+    this.updateCamera(dt);
+    this.updatePrompt();
+    this.updatePlayer(dt);
+
+    if (this.deathT > 0) {
+      this.deathT -= dt;
+      if (this.deathT <= 0) {
+        const who = BROTHER[this.hero];
+        this.restart(`${who} has fallen`, this.memory ? "The memory begins again." : "Ren wakes in the hideout. The mission begins again.");
+      }
+    }
+
+    updateEnemies(this, dt);
+    this.updateShots(dt);
+
+    for (const n of this.npcs) {
+      if (n.role !== "villager") continue;
+      n.t += dt;
+      const tx = n.home.x + Math.cos(n.t * 0.3) * 2;
+      const ty = n.home.y + Math.sin(n.t * 0.23) * 1.6;
+      n.facing = Math.atan2(ty - n.y, tx - n.x);
+      const before = { x: n.x, y: n.y };
+      n.x += (tx - n.x) * dt;
+      n.y += (ty - n.y) * dt;
+      n.walk += dist(before, n);
+    }
+
+    this.updateMission(dt);
+
+    for (const f of this.floaters) f.t += dt;
+    this.floaters = this.floaters.filter((f) => f.t < 1.1);
+    for (const b of this.bubbles) b.t -= dt;
+    this.bubbles = this.bubbles.filter((b) => b.t > 0);
+
+    this.zone.camps.forEach((c, i) => {
+      if (this.enemies.some((e) => e.camp === i && e.state !== "dead")) return;
+      this.campT[i] += dt;
+      if (this.campT[i] > 60 && dist(p, c) > 35) {
+        this.campT[i] = 0;
+        this.enemies = this.enemies.filter((e) => e.camp !== i);
+        this.spawnCamp(i);
+      }
+    });
+
+    this.hudT -= dt;
+    if (this.hudT <= 0) {
+      this.hudT = 0.08;
+      this.pushHud();
+    }
+  }
+
+  private updateShots(dt: number) {
+    const p = this.player;
+    const friend = this.active?.friend;
+    for (const s of this.shots) {
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.life -= dt;
+      if (this.solids.some((r) => inRect(s, r))) {
+        s.life = 0;
+        this.burst({ k: "spark", x: s.x, y: s.y, n: 3, dir: Math.atan2(-s.vy, -s.vx) });
+        continue;
+      }
+      if (dist(s, p) < PLAYER_R + s.r) {
+        s.life = 0;
+        const before = p.hp;
+        hurtPlayer(this, s.dmg, { x: s.sx, y: s.sy }, false, null);
+        if (s.pull && p.hp < before && p.hp > 0) this.moveBody(p, (s.sx - p.x) * 0.6, (s.sy - p.y) * 0.6, PLAYER_R);
+      } else if (friend && friend.hp > 0 && dist(s, friend) < 0.5 + s.r) {
+        s.life = 0;
+        friend.hp -= s.dmg * 0.6;
+      }
+    }
+    this.shots = this.shots.filter((s) => s.life > 0);
+  }
+
+  private updatePrompt() {
+    this.prompt = null;
+    const fin = finisherTarget(this);
+    if (fin) {
+      this.prompt = { text: fin.kind === "takedown" ? "Stealth takedown" : "Execute", run: () => startFinisher(this, fin) };
+      return;
+    }
+    if (this.memory) return;
+    const nation = this.save.nation;
+    for (const n of this.npcs) {
+      if (dist(this.player, n) > 3) continue;
+      if (n.role === "giver" && !this.active) {
+        const m = nextMission(this.save, nation);
+        if (m) this.prompt = { text: `Talk to ${n.name}`, run: () => this.emit({ type: "offer", mission: m }) };
+        else {
+          this.prompt = { text: `Talk to ${n.name}`, run: () => this.say(`${n.name}: ${NATIONS[nation].name} is free. Go well, ronin.`, n) };
+        }
+      } else if (n.role === "biwa") {
+        this.prompt = { text: "Listen to the Biwa Woman", run: () => this.comic(actIntro(nation), () => undefined) };
+      }
+    }
+  }
+
+  stealth(): Stealth | null {
+    const p = this.player;
+    let sus = 0;
+    for (const e of this.enemies) {
+      if (e.state === "dead" || e.object || dist(e, p) > 30) continue;
+      if (e.aware) return "detected";
+      sus = Math.max(sus, e.suspicion);
+    }
+    if (sus > 0.15) return "suspicious";
+    return p.crouch ? "hidden" : null;
+  }
+
+  private pushHud() {
+    const p = this.player;
+    const a = this.active;
+    const boss = this.enemies.find((e) => e.boss && e.state !== "dead");
+    this.onHud({
+      hp: Math.max(0, Math.round(p.hp)),
+      maxHp: p.maxHp,
+      stamina: Math.max(0, Math.round(p.stamina)),
+      maxStamina: p.maxStamina,
+      stims: p.stims,
+      maxStims: MAX_STIMS,
+      level: this.save.level,
+      xp: this.save.xp,
+      xpNeed: xpNeed(this.save.level),
+      weapon: p.weapon,
+      weapons: this.weapons(),
+      specialCd: clamp(p.specialCd / WEAPONS[p.weapon].special.cd, 0, 1),
+      crouched: p.crouch,
+      stealth: this.stealth(),
+      locked: !!this.lock,
+      cinematic: !!this.cine,
+      zone: this.memory ? "The Night of Red Camellias" : `${NATIONS[this.save.nation].name}, ${NATIONS[this.save.nation].realm}`,
+      nation: this.save.nation,
+      memory: this.memory,
+      hero: BROTHER[this.hero],
+      objective: a ? { title: a.m.title, cls: a.m.cls, text: a.m.steps[a.i].text, got: a.got, need: a.need } : null,
+      prompt: this.prompt?.text ?? null,
+      boss: boss && boss.aware ? { name: `${NATIONS[this.zone.nation].general.name}, ${boss.name}`, hp: Math.max(0, boss.hp), maxHp: boss.maxHp } : null,
+      friend: a?.friend ? { name: a.friend.name, hp: Math.max(0, a.friend.hp), maxHp: a.friend.maxHp } : null,
+    });
+  }
+
+  /** Runs the prompt shown to the player (used by the on-screen interact button). */
+  interact() {
+    this.prompt?.run();
+  }
+
+  /** Raises the alarm in every enemy near a point (used when an object is broken loudly). */
+  noise(at: Vec, r: number) {
+    for (const e of this.enemies) if (e.state !== "dead" && !e.object && dist(e, at) < r) alert(this, e, this.player);
+  }
+}

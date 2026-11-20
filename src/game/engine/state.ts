@@ -1,0 +1,256 @@
+import type { Archetype, AttackSpec, BossDef, Env, Mission, Move, NationId, PoiKey, WeaponId, ZoneId } from "../types";
+
+// Runtime entities of the world simulation. The world is a flat plane: x runs east, y runs south,
+// both in metres. The renderer maps y onto the 3D z axis.
+
+export interface Vec {
+  x: number;
+  y: number;
+}
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Building extends Rect {
+  height: number;
+  /** Broken, open-topped ruin. */
+  ruined: boolean;
+  seed: number;
+}
+
+/** Things that only decorate the streets. Cars and barriers also block movement and sight. */
+export interface Prop extends Vec {
+  kind: "car" | "barrier" | "fire" | "lamp" | "sign" | "rubble" | "steam" | "crate" | "stoop" | "subway" | "hydrant";
+  rot: number;
+  seed: number;
+  color?: number;
+  text?: string;
+}
+
+export interface Zone {
+  id: ZoneId;
+  nation: NationId;
+  w: number;
+  h: number;
+  pois: Record<PoiKey, Vec & { name: string }>;
+  buildings: Building[];
+  /** Fortress walls and the inner wall. */
+  walls: Rect[];
+  /** Small solids such as cars and barriers. */
+  cover: Rect[];
+  gate: Rect | null;
+  fortress: Rect | null;
+  /** The general's hall inside the fortress; bosses stay within it. */
+  hall: Rect | null;
+  props: Prop[];
+  camps: Vec[];
+  env: Env;
+  enemies: Record<Archetype, { name: string; color: number }>;
+  beast?: Archetype;
+}
+
+export type ActKind = "idle" | "attack" | "dodge" | "block" | "hurt" | "broken" | "takedown" | "stim";
+
+export interface PlayerAct {
+  kind: ActKind;
+  t: number;
+  dur: number;
+  move: Move | null;
+  /** Which strike of the move has landed (flurries land several). */
+  landed: number;
+  dir: number;
+  /** Counter attack: bonus damage multiplier on this move. */
+  bonus: number;
+  target: Enemy | null;
+}
+
+export interface Player extends Vec {
+  facing: number;
+  /** Current velocity, eased towards the desired one so movement has weight. */
+  vx: number;
+  vy: number;
+  hp: number;
+  maxHp: number;
+  stamina: number;
+  maxStamina: number;
+  staminaT: number;
+  weapon: WeaponId;
+  act: PlayerAct;
+  combo: number;
+  comboT: number;
+  /** Buffered press, executed when the current action ends. */
+  buffer: "light" | "heavy" | "special" | "dodge" | null;
+  bufferT: number;
+  specialCd: number;
+  stims: number;
+  /** Time left in which a just-pressed guard parries. */
+  parryT: number;
+  blocking: boolean;
+  /** Next attack within this window is a counter. */
+  counterT: number;
+  invuln: number;
+  lastHurt: number;
+  flash: number;
+  crouch: boolean;
+  speed: number;
+  walk: number;
+}
+
+export type EnemyState = "idle" | "patrol" | "search" | "chase" | "circle" | "windup" | "recover" | "stagger" | "home" | "dead";
+
+export interface Enemy extends Vec {
+  id: number;
+  arch: Archetype;
+  name: string;
+  color: number;
+  hp: number;
+  maxHp: number;
+  dmg: number;
+  speed: number;
+  radius: number;
+  xp: number;
+  state: EnemyState;
+  t: number;
+  /** Total length of the current windup, for telegraphs. */
+  tw: number;
+  aim: number;
+  facing: number;
+  home: Vec;
+  patrol: Vec[];
+  patrolI: number;
+  camp: number;
+  mission: boolean;
+  step: boolean;
+  elite: boolean;
+  object: boolean;
+  beast: boolean;
+  decoy: boolean;
+  boss: BossDef | null;
+  atk: AttackSpec;
+  atkIdx: number;
+  cd: number;
+  chaseT: number;
+  stun: number;
+  flash: number;
+  guardT: number;
+  poise: number;
+  maxPoise: number;
+  /** 0..1: how sure this enemy is that someone is there. */
+  suspicion: number;
+  lastSeen: Vec | null;
+  aware: boolean;
+  /** Knock-back velocity. */
+  kx: number;
+  ky: number;
+  walk: number;
+  /** Seconds since death, for the fall and fade. */
+  deadT: number;
+  /** Took the attack token: allowed to attack the hero now. */
+  token: boolean;
+  circleDir: number;
+  killedBy: "takedown" | "blow" | null;
+}
+
+export interface Shot extends Vec {
+  vx: number;
+  vy: number;
+  sx: number;
+  sy: number;
+  dmg: number;
+  life: number;
+  pull: boolean;
+  r: number;
+}
+
+export interface Npc extends Vec {
+  name: string;
+  role: "giver" | "biwa" | "villager" | "friend";
+  look: "villager" | "biwa" | "cargo";
+  hp: number;
+  maxHp: number;
+  facing: number;
+  home: Vec;
+  t: number;
+  walk: number;
+}
+
+export interface Pickup extends Vec {
+  label: string;
+  taken: boolean;
+}
+
+/** One-shot effects the renderer turns into particles. */
+export interface Burst extends Vec {
+  k: "blood" | "spark" | "parry" | "dust" | "shatter" | "ring";
+  n: number;
+  /** Direction the spray flies, in radians. */
+  dir: number;
+  r?: number;
+}
+
+export interface Floater extends Vec {
+  text: string;
+  t: number;
+  color: string;
+  big: boolean;
+}
+
+export interface Bubble {
+  speaker: string;
+  text: string;
+  t: number;
+  ghost: boolean;
+  on: Vec;
+}
+
+export interface Active {
+  m: Mission;
+  i: number;
+  got: number;
+  need: number;
+  wave: number;
+  waveT: number;
+  started: boolean;
+  friend: Npc | null;
+  ambush: number;
+}
+
+export const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y);
+
+export const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+
+export const inRect = (p: Vec, r: Rect, pad = 0) => p.x > r.x - pad && p.x < r.x + r.w + pad && p.y > r.y - pad && p.y < r.y + r.h + pad;
+
+/** Distance from point p to the segment a-b. */
+export function segDist(p: Vec, a: Vec, b: Vec) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+  return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+}
+
+/** Does the segment a-b cross the rectangle? (slab test) */
+export function segHitsRect(a: Vec, b: Vec, r: Rect) {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const clip = (p: number, q: number) => {
+    if (p === 0) return q >= 0;
+    const t = q / p;
+    if (p < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+    return true;
+  };
+  return clip(-dx, a.x - r.x) && clip(dx, r.x + r.w - a.x) && clip(-dy, a.y - r.y) && clip(dy, r.y + r.h - a.y) && t0 <= t1;
+}

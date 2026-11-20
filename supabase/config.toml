@@ -1,0 +1,7 @@
+project_id = "ample-mango-af5d9d0c"
+
+[functions.voice-tts]
+verify_jwt = false
+
+[functions.npc-agent]
+verify_jwt = false
