@@ -38,6 +38,10 @@ const makeNpc = (name: string, role: Npc["role"], x: number, y: number, look: Np
   home: { x, y },
   t: Math.random() * 4,
   walk: 0,
+  pauseT: 0.5 + Math.random() * 2.5,
+  goal: null,
+  vx: 0,
+  vy: 0,
 });
 
 /** The world simulation: the hero, enemies, missions and the frame loop. Rendering lives elsewhere. */
@@ -122,15 +126,25 @@ export class Game {
 
   // ---------- Lifecycle ----------
 
+  private handleVisibility = () => {
+    this.last = performance.now();
+    if (document.hidden) {
+      this.input.keys.clear();
+      this.input.queue.length = 0;
+      this.input.guardHeld = false;
+    }
+  };
+
   start() {
     this.input.attach();
+    document.addEventListener("visibilitychange", this.handleVisibility);
     this.last = performance.now();
     const loop = (ts: number) => {
       // Real time drives the game even when frames are slow: long frames are split into
       // small sub-steps instead of being clipped, so nothing ever runs in slow motion.
-      const real = Math.min(0.1, (ts - this.last) / 1000);
+      const real = document.hidden ? 0 : Math.min(0.1, Math.max(0, (ts - this.last) / 1000));
       this.last = ts;
-      if (this.paused) this.input.queue.length = 0;
+      if (this.paused || document.hidden) this.input.queue.length = 0;
       else {
         let left = real;
         while (left > 1e-4) {
@@ -139,7 +153,7 @@ export class Game {
           left -= h;
         }
       }
-      this.onFrame?.(real);
+      if (!document.hidden) this.onFrame?.(real);
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
@@ -149,6 +163,7 @@ export class Game {
 
   stop() {
     cancelAnimationFrame(this.raf);
+    document.removeEventListener("visibilitychange", this.handleVisibility);
     this.input.detach();
   }
 
@@ -241,12 +256,28 @@ export class Game {
     p.stamina = MAX_STAMINA;
     p.stims = MAX_STIMS;
     p.act = idleAct();
+    p.combo = 0;
+    p.comboT = 0;
+    p.buffer = null;
+    p.bufferT = 0;
+    p.specialCd = 0;
+    p.parryT = 0;
+    p.counterT = 0;
+    p.blocking = false;
+    p.flash = 0;
     p.invuln = 1;
     p.facing = 0;
     p.crouch = false;
+    p.speed = 0;
+    p.walk = 0;
     this.camYaw = 0;
     this.lock = null;
+    this.lockAuto = false;
     this.deathT = 0;
+    this.slowT = 0;
+    this.hitstop = 0;
+    this.cine = null;
+    this.shakeAmt = 0;
   }
 
   private spawnCamp(i: number) {
@@ -345,9 +376,15 @@ export class Game {
   die() {
     const p = this.player;
     p.hp = 0;
+    p.vx = p.vy = 0;
+    p.speed = 0;
+    p.crouch = false;
+    p.blocking = false;
+    p.parryT = 0;
+    p.counterT = 0;
     p.act = { ...idleAct(), kind: "broken", dur: 99 };
-    this.deathT = 2.4;
-    this.slow(1.2);
+    this.deathT = 2.65;
+    this.slow(0.45);
     this.lock = null;
   }
 
@@ -356,6 +393,7 @@ export class Game {
     if (!a) return;
     const s = a.m.steps[i];
     if (a.friend) this.npcs = this.npcs.filter((n) => n !== a.friend);
+    this.pickups = [];
     Object.assign(a, { i, got: 0, need: 1, wave: 0, waveT: 0, started: false, friend: null, ambush: 0 });
     const at = this.zone.pois[s.kind === "escort" ? s.from : s.at];
     const friendHp = Math.round(220 * (1 + 0.35 * this.generals()));
@@ -463,10 +501,50 @@ export class Game {
         const d = dist(f, to);
         const threat = this.enemies.some((e) => e.mission && e.state !== "dead" && dist(e, f) < 12);
         if (!threat && dist(p, f) < 15 && d > 3) {
-          f.facing = Math.atan2(to.y - f.y, to.x - f.x);
-          const before = { x: f.x, y: f.y };
-          this.moveBody(f, Math.cos(f.facing) * 3 * dt, Math.sin(f.facing) * 3 * dt, 0.4);
-          f.walk += dist(before, f);
+          const want = Math.atan2(to.y - f.y, to.x - f.x);
+          const step = Math.min(d, 3 * dt);
+          const bx = f.x;
+          const by = f.y;
+          this.moveBody(f, Math.cos(want) * step, Math.sin(want) * step, 0.4);
+          let steerAngle = want;
+          const fwd = (f.x - bx) * Math.cos(want) + (f.y - by) * Math.sin(want);
+          if (fwd < step * 0.55) {
+            const s0 = f.steerDir || 1;
+            let bestX = f.x;
+            let bestY = f.y;
+            let bestMoved = Math.hypot(f.x - bx, f.y - by);
+            let doneSteer = false;
+            for (const s of [s0, -s0]) {
+              for (const mag of [0.7, 1.25, 1.55]) {
+                f.x = bx;
+                f.y = by;
+                const a2 = want + mag * s;
+                this.moveBody(f, Math.cos(a2) * step, Math.sin(a2) * step, 0.4);
+                const moved = Math.hypot(f.x - bx, f.y - by);
+                if (moved >= step * 0.35) {
+                  f.steerDir = s;
+                  steerAngle = a2;
+                  doneSteer = true;
+                  break;
+                }
+                if (moved > bestMoved + 1e-4) {
+                  bestMoved = moved;
+                  bestX = f.x;
+                  bestY = f.y;
+                  steerAngle = a2;
+                  f.steerDir = s;
+                }
+              }
+              if (doneSteer) break;
+            }
+            if (!doneSteer) {
+              f.x = bestX;
+              f.y = bestY;
+            }
+          }
+          const diff = Math.atan2(Math.sin(steerAngle - f.facing), Math.cos(steerAngle - f.facing));
+          f.facing += diff * (1 - Math.exp(-dt * 8));
+          f.walk += Math.hypot(f.x - bx, f.y - by);
         }
         const frac = 1 - d / (dist(pois[s.from], to) || 1);
         if (a.ambush < s.waves && frac > (a.ambush + 1) / (s.waves + 1)) {
@@ -542,8 +620,12 @@ export class Game {
     const nearest = <T extends Vec>(list: T[]) => list.reduce<T | null>((best, e) => (!best || dist(p, e) < dist(p, best) ? e : best), null);
     switch (s.kind) {
       case "reach":
+        return this.zone.pois[s.at];
       case "defend":
       case "survive":
+        if (a.started && dist(p, this.zone.pois[s.at]) < 18) {
+          return nearest(this.enemies.filter((e) => e.step && e.state !== "dead")) ?? this.zone.pois[s.at];
+        }
         return this.zone.pois[s.at];
       case "collect":
         return nearest(this.pickups.filter((k) => !k.taken)) ?? this.zone.pois[s.at];
@@ -566,7 +648,7 @@ export class Game {
       const a = Math.random() * Math.PI * 2;
       const r = (rMin + Math.random() * (rMax - rMin)) * k;
       const pt = { x: center.x + Math.cos(a) * r, y: center.y + Math.sin(a) * r };
-      if (pt.x < 2.5 || pt.y < 2.5 || pt.x > z.w - 2.5 || pt.y > z.h - 2.5) continue;
+      if (pt.x < 2.8 || pt.y < 2.8 || pt.x > z.w - 2.8 || pt.y > z.h - 2.8) continue;
       if (z.fortress && inRect(pt, z.fortress, 1.5) !== inFort) continue;
       if (z.hall && inRect(pt, z.hall) !== inHall) continue;
       if (this.solids.some((s) => inRect(pt, s, 1))) continue;
@@ -577,10 +659,11 @@ export class Game {
 
   moveBody(b: Vec, dx: number, dy: number, r: number, sub = 0.3) {
     const z = this.zone;
+    const edge = 1.6 + r;
     const n = Math.max(1, Math.ceil(Math.hypot(dx, dy) / sub));
     for (let i = 0; i < n; i++) {
-      b.x = clamp(b.x + dx / n, 1.5, z.w - 1.5);
-      b.y = clamp(b.y + dy / n, 1.5, z.h - 1.5);
+      b.x = clamp(b.x + dx / n, edge, z.w - edge);
+      b.y = clamp(b.y + dy / n, edge, z.h - edge);
       for (const s of this.solids) {
         if (b.x < s.x - r || b.x > s.x + s.w + r || b.y < s.y - r || b.y > s.y + s.h + r) continue;
         const cx = clamp(b.x, s.x, s.x + s.w);
@@ -621,7 +704,7 @@ export class Game {
   clampToArena(e: Enemy) {
     const z = this.zone;
     const area = z.hall && inRect(e.home, z.hall, 2) ? z.hall : { x: 0, y: 0, w: z.w, h: z.h };
-    const m = e.radius + 0.6;
+    const m = z.hall && inRect(e.home, z.hall, 2) ? e.radius + 0.6 : 1.6 + e.radius + 0.4;
     e.x = clamp(e.x, area.x + m, area.x + area.w - m);
     e.y = clamp(e.y, area.y + m, area.y + area.h - m);
   }
@@ -837,7 +920,7 @@ export class Game {
     if (p.bufferT <= 0) p.buffer = null;
     if (p.comboT <= 0 && p.act.kind !== "attack") p.combo = 0;
 
-    const free = p.hp > 0 && updateAct(this, dt);
+    const free = updateAct(this, dt) && p.hp > 0;
     if (free && p.buffer) {
       const b = p.buffer;
       p.buffer = null;
@@ -858,8 +941,8 @@ export class Game {
     if (this.lock && !sprint) speed = Math.min(speed, 4.8);
     const tvx = free ? want.x * speed : 0;
     const tvy = free ? want.y * speed : 0;
-    // Heavy body: velocity eases towards the wish, faster when stopping.
-    const k = 1 - Math.pow(mag > 0.1 ? 0.00003 : 0.000004, dt);
+    // Heavy body: velocity eases smoothly towards the wish, crisper when braking.
+    const k = 1 - Math.exp(-dt * (mag > 0.1 ? 10.5 : 13.5));
     p.vx += (tvx - p.vx) * k;
     p.vy += (tvy - p.vy) * k;
     if (free) {
@@ -878,14 +961,14 @@ export class Game {
       if (p.crouch) p.crouch = false;
     }
 
-    // Facing: towards the lock target, else towards travel.
+    // Facing: smooth exponential sweep towards lock target or travel heading.
     if (free) {
       let want: number | null = null;
       if (this.lock) want = Math.atan2(this.lock.y - p.y, this.lock.x - p.x);
       else if (mag > 0.1) want = Math.atan2(p.vy, p.vx);
       if (want !== null) {
         const d = Math.atan2(Math.sin(want - p.facing), Math.cos(want - p.facing));
-        p.facing += clamp(d, -dt * 15, dt * 15);
+        p.facing += d * (1 - Math.exp(-dt * (this.lock ? 16 : 14)));
       }
     }
 
@@ -939,15 +1022,51 @@ export class Game {
     this.updateShots(dt);
 
     for (const n of this.npcs) {
-      if (n.role !== "villager") continue;
       n.t += dt;
-      const tx = n.home.x + Math.cos(n.t * 0.3) * 2;
-      const ty = n.home.y + Math.sin(n.t * 0.23) * 1.6;
-      n.facing = Math.atan2(ty - n.y, tx - n.x);
+      if (n.role === "giver") {
+        // Quest givers turn attentively toward Ren when nearby and settle back calmly.
+        const dHero = dist(n, p);
+        const want = dHero < 8 ? Math.atan2(p.y - n.y, p.x - n.x) : Math.PI * 0.45;
+        const diff = Math.atan2(Math.sin(want - n.facing), Math.cos(want - n.facing));
+        n.facing += diff * (1 - Math.exp(-dt * 5));
+        continue;
+      }
+      if (n.role !== "villager") continue;
+      if ((n.pauseT ?? 0) > 0) {
+        n.pauseT = (n.pauseT ?? 0) - dt;
+        const damp = Math.exp(-dt * 6);
+        n.vx = (n.vx ?? 0) * damp;
+        n.vy = (n.vy ?? 0) * damp;
+        if ((n.pauseT ?? 0) <= 0) n.goal = this.spot(n.home, 1.5, 4.8);
+        continue;
+      }
+      if (!n.goal) n.goal = this.spot(n.home, 1.5, 4.8);
+      const gx = n.goal.x - n.x;
+      const gy = n.goal.y - n.y;
+      const gd = Math.hypot(gx, gy);
+      if (gd < 0.45) {
+        n.goal = null;
+        n.pauseT = 2.2 + Math.random() * 3.8;
+        continue;
+      }
+      const pace = 1.25;
+      const tvx = (gx / gd) * pace;
+      const tvy = (gy / gd) * pace;
+      const k = 1 - Math.exp(-dt * 5);
+      n.vx = (n.vx ?? 0) + (tvx - (n.vx ?? 0)) * k;
+      n.vy = (n.vy ?? 0) + (tvy - (n.vy ?? 0)) * k;
       const before = { x: n.x, y: n.y };
-      n.x += (tx - n.x) * dt;
-      n.y += (ty - n.y) * dt;
-      n.walk += dist(before, n);
+      this.moveBody(n, n.vx * dt, n.vy * dt, 0.38);
+      const moved = dist(before, n);
+      n.walk += moved;
+      if (moved < 0.004 * (dt * 60)) {
+        n.goal = null;
+        n.pauseT = 1.5 + Math.random() * 2;
+      } else {
+        const want = Math.atan2(n.vy, n.vx);
+        const diff = Math.atan2(Math.sin(want - n.facing), Math.cos(want - n.facing));
+        n.facing += diff * (1 - Math.exp(-dt * 6));
+      }
     }
 
     this.updateMission(dt);

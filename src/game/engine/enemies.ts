@@ -131,12 +131,15 @@ export function makeBoss(g: Game, at: Vec): Enemy {
   };
 }
 
-function makeDecoy(g: Game, boss: Enemy, at: Vec): Enemy {
+function makeDecoy(g: Game, boss: Enemy, at: Vec, aim: number): Enemy {
   return {
     ...boss,
     id: g.ids++,
     x: at.x,
     y: at.y,
+    home: { x: at.x, y: at.y },
+    facing: aim,
+    aim,
     hp: 1,
     maxHp: 1,
     dmg: boss.dmg * 0.5,
@@ -146,7 +149,16 @@ function makeDecoy(g: Game, boss: Enemy, at: Vec): Enemy {
     decoy: true,
     step: false,
     atk: ARCH.melee.atk,
-    cd: ARCH.melee.cd,
+    cd: 0.35 + Math.random() * 0.5,
+    t: 0,
+    tw: 1,
+    stun: 0,
+    flash: 0,
+    guardT: 0,
+    kx: 0,
+    ky: 0,
+    deadT: 0,
+    token: false,
     state: "chase",
     chaseT: 0,
     aware: true,
@@ -239,12 +251,15 @@ function resolve(g: Game, e: Enemy) {
           e.x = at.x;
           e.y = at.y;
           g.clampToArena(e);
+          e.facing = Math.atan2(p.y - e.y, p.x - e.x);
+          g.burst({ k: "dust", x: e.x, y: e.y, n: 12, dir: 0 });
         } else {
-          const d = makeDecoy(g, e, at);
+          const d = makeDecoy(g, e, at, Math.atan2(p.y - at.y, p.x - at.x));
           g.clampToArena(d);
+          d.facing = Math.atan2(p.y - d.y, p.x - d.x);
           g.enemies.push(d);
+          g.burst({ k: "dust", x: d.x, y: d.y, n: 12, dir: 0 });
         }
-        g.burst({ k: "dust", x: at.x, y: at.y, n: 12, dir: 0 });
       }
       break;
     }
@@ -261,14 +276,54 @@ function canSee(g: Game, e: Enemy, p: Vec, range: number) {
   return g.lineOfSight(e, p, g.player.crouch);
 }
 
+function steerStep(g: Game, e: Enemy, heading: number, step: number): number {
+  const bx = e.x;
+  const by = e.y;
+  g.moveBody(e, Math.cos(heading) * step, Math.sin(heading) * step, e.radius);
+  const hx = Math.cos(heading);
+  const hy = Math.sin(heading);
+  const fwd = (e.x - bx) * hx + (e.y - by) * hy;
+  if (fwd >= step * 0.55) return heading;
+
+  const s0 = e.circleDir || 1;
+  let bestX = e.x;
+  let bestY = e.y;
+  let bestMoved = Math.hypot(e.x - bx, e.y - by);
+  let bestAngle = heading;
+  for (const s of [s0, -s0]) {
+    for (const mag of [0.7, 1.25, 1.55]) {
+      e.x = bx;
+      e.y = by;
+      const a = heading + mag * s;
+      g.moveBody(e, Math.cos(a) * step, Math.sin(a) * step, e.radius);
+      const moved = Math.hypot(e.x - bx, e.y - by);
+      if (moved >= step * 0.35) {
+        e.circleDir = s;
+        return a;
+      }
+      if (moved > bestMoved + 1e-4) {
+        bestMoved = moved;
+        bestX = e.x;
+        bestY = e.y;
+        bestAngle = a;
+        e.circleDir = s;
+      }
+    }
+  }
+  e.x = bestX;
+  e.y = bestY;
+  return bestAngle;
+}
+
 function walkTo(g: Game, e: Enemy, to: Vec, speed: number, dt: number) {
   const dx = to.x - e.x;
   const dy = to.y - e.y;
   const d = Math.hypot(dx, dy);
   if (d < 0.05) return d;
-  turn(e, Math.atan2(dy, dx), dt * 8);
+  const aim = Math.atan2(dy, dx);
   const step = Math.min(d, speed * dt);
-  g.moveBody(e, (dx / d) * step, (dy / d) * step, e.radius);
+  const steered = steerStep(g, e, aim, step);
+  turn(e, steered, dt * 8);
   e.walk += step;
   return d;
 }
@@ -321,8 +376,8 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
     } else {
       e.suspicion = Math.max(0, e.suspicion - dt * 0.12);
     }
-    // Noise: running close by is heard.
-    if (!e.aware && !p.crouch && p.speed > 3 && dist(e, p) < 3.5) alert(g, e, p);
+    // Noise: running close by is heard (non-boss enemies only so walls aren't bypassed).
+    if (!e.aware && !e.boss && !p.crouch && p.speed > 3 && dist(e, p) < 3.5) alert(g, e, p);
     // Escort and defend targets are attacked on sight.
     if (!e.aware && tgt !== p && d < 9) alert(g, e, tgt);
   }
@@ -330,7 +385,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
   switch (e.state) {
     case "idle":
       if (e.boss) {
-        if (d < 15) {
+        if (d < 15 && g.lineOfSight(e, p, false)) {
           e.state = "chase";
           e.aware = true;
           g.bossIntro(e);
@@ -412,7 +467,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
       } else {
         e.state = "chase";
         const sp = e.speed * (d > 8 ? 1 : 0.75);
-        g.moveBody(e, (dx / d) * sp * dt, (dy / d) * sp * dt, e.radius);
+        steerStep(g, e, Math.atan2(dy, dx), sp * dt);
         e.walk += sp * dt;
       }
       break;

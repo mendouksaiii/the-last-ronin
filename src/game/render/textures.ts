@@ -96,11 +96,13 @@ export interface FacadeSet {
   roughness: THREE.CanvasTexture;
 }
 
-export type FacadeKind = "brick" | "concrete" | "brownstone" | "limestone" | "glass";
+export type FacadeKind = "brick" | "concrete" | "brownstone" | "limestone" | "glass" | "corrugated" | "gothic";
 
-/** A brick, brownstone or concrete wall with recessed glass windows, sills, grime and rain streaks; or a glass curtain wall. */
+/** A brick, brownstone, concrete, corrugated metal or gothic stone wall with windows and surface detail. */
 export function facadeTextures(kind: FacadeKind): FacadeSet {
   if (kind === "glass") return glassTextures();
+  if (kind === "corrugated") return corrugatedTextures();
+  if (kind === "gothic") return gothicTextures();
   const size = 1024;
   const cell = size / 8;
   const rnd = mulberry(kind === "brick" ? 9001 : kind === "brownstone" ? 7117 : kind === "limestone" ? 3131 : 4242);
@@ -368,6 +370,164 @@ function glassTextures(): FacadeSet {
   return { map, emissive, normal, roughness };
 }
 
+/** Weathered corrugated steel panels with vertical ribs, horizontal panel seams and rust streaks (warehouses & containers). */
+function corrugatedTextures(): FacadeSet {
+  const size = 512;
+  const rnd = mulberry(8821);
+  const base = canvas(size, size);
+  const glow = canvas(size, size);
+  const height = canvas(size, size);
+  const rough = canvas(size, size);
+  const b = base.ctx;
+  const e = glow.ctx;
+  const hc = height.ctx;
+  const r = rough.ctx;
+  e.fillStyle = "#000";
+  e.fillRect(0, 0, size, size);
+  b.fillStyle = rgb(168, 170, 172);
+  b.fillRect(0, 0, size, size);
+  hc.fillStyle = grey(128);
+  hc.fillRect(0, 0, size, size);
+  r.fillStyle = grey(145);
+  r.fillRect(0, 0, size, size);
+  // Vertical corrugation ribs.
+  const pitch = 16;
+  for (let x = 0; x < size; x += pitch) {
+    const grad = b.createLinearGradient(x, 0, x + pitch, 0);
+    grad.addColorStop(0, rgb(125, 128, 132));
+    grad.addColorStop(0.35, rgb(206, 208, 210));
+    grad.addColorStop(0.65, rgb(196, 198, 202));
+    grad.addColorStop(1, rgb(115, 118, 122));
+    b.fillStyle = grad;
+    b.fillRect(x, 0, pitch, size);
+    const hg = hc.createLinearGradient(x, 0, x + pitch, 0);
+    hg.addColorStop(0, grey(45));
+    hg.addColorStop(0.5, grey(235));
+    hg.addColorStop(1, grey(45));
+    hc.fillStyle = hg;
+    hc.fillRect(x, 0, pitch, size);
+  }
+  // Horizontal sheet seams & rivets.
+  for (let y = 0; y < size; y += 128) {
+    b.fillStyle = rgb(70, 68, 66);
+    b.fillRect(0, y, size, 4);
+    hc.fillStyle = grey(30);
+    hc.fillRect(0, y, size, 4);
+  }
+  // Rust streaks & weathered paint scrapes.
+  for (let i = 0; i < 120; i++) {
+    const x = rnd() * size;
+    const y = rnd() * size;
+    const w = 4 + rnd() * 16;
+    const l = 20 + rnd() * 90;
+    const rg = b.createLinearGradient(0, y, 0, y + l);
+    rg.addColorStop(0, rgb(124, 66, 38, 0.55));
+    rg.addColorStop(1, rgb(124, 66, 38, 0));
+    b.fillStyle = rg;
+    b.fillRect(x, y, w, l);
+    r.fillStyle = grey(235, 0.65);
+    r.fillRect(x, y, w, l * 0.7);
+  }
+  const map = repeat(colorTex(base.c));
+  const emissive = repeat(colorTex(glow.c));
+  const normal = repeat(dataTex(normalFromHeight(height.c, 3.0)));
+  const roughness = repeat(dataTex(rough.c));
+  return { map, emissive, normal, roughness };
+}
+
+/** Frost-dusted gothic cathedral stonework with tall pointed lancet arches and warm candlelit stained glass. */
+function gothicTextures(): FacadeSet {
+  const size = 1024;
+  const cell = size / 8;
+  const rnd = mulberry(6319);
+  const base = canvas(size, size);
+  const glow = canvas(size, size);
+  const height = canvas(size, size);
+  const rough = canvas(size, size);
+  const b = base.ctx;
+  const e = glow.ctx;
+  const hc = height.ctx;
+  const r = rough.ctx;
+  e.fillStyle = "#000";
+  e.fillRect(0, 0, size, size);
+  b.fillStyle = rgb(164, 170, 178);
+  b.fillRect(0, 0, size, size);
+  hc.fillStyle = grey(160);
+  hc.fillRect(0, 0, size, size);
+  r.fillStyle = grey(220);
+  r.fillRect(0, 0, size, size);
+  // Ashlar stone blocks with frost highlights.
+  const course = 32;
+  for (let row = 0; row * course < size; row++) {
+    const y = row * course;
+    for (let x = (row % 2 ? -32 : 0); x < size; x += 64) {
+      const k = 0.85 + rnd() * 0.25;
+      b.fillStyle = rgb(156 * k, 164 * k, 174 * k);
+      b.fillRect(x + 1, y + 1, 62, course - 2);
+      hc.fillStyle = grey(150 + rnd() * 45);
+      hc.fillRect(x + 2, y + 2, 60, course - 4);
+    }
+    hc.fillStyle = grey(55);
+    hc.fillRect(0, y, size, 2);
+  }
+  // Pointed gothic lancet windows (4 tall arched bays across, 4 storeys high).
+  const bayW = cell * 2;
+  const bayH = cell * 2;
+  for (let gx = 0; gx < 4; gx++) {
+    for (let gy = 0; gy < 4; gy++) {
+      const cx = gx * bayW + bayW / 2;
+      const top = gy * bayH + 34;
+      const w = bayW * 0.42;
+      const h = bayH * 0.68;
+      const archH = w * 0.65;
+      const drawArch = (ctx: CanvasRenderingContext2D, pad: number) => {
+        const hw = w / 2 + pad;
+        ctx.beginPath();
+        ctx.moveTo(cx - hw, top + h + pad);
+        ctx.lineTo(cx - hw, top + archH);
+        ctx.quadraticCurveTo(cx - hw, top - pad, cx, top - pad);
+        ctx.quadraticCurveTo(cx + hw, top - pad, cx + hw, top + archH);
+        ctx.lineTo(cx + hw, top + h + pad);
+        ctx.closePath();
+        ctx.fill();
+      };
+      // Stone surround.
+      b.fillStyle = rgb(196, 204, 212);
+      drawArch(b, 10);
+      hc.fillStyle = grey(240);
+      drawArch(hc, 10);
+      // Recessed gothic leaded glass.
+      const lit = rnd() < 0.42;
+      b.fillStyle = lit ? rgb(140, 82, 46) : rgb(24, 34, 48);
+      drawArch(b, 0);
+      hc.fillStyle = grey(18);
+      drawArch(hc, 0);
+      r.fillStyle = grey(30);
+      drawArch(r, 0);
+      if (lit) {
+        const gg = e.createLinearGradient(cx, top, cx, top + h);
+        const warm = rnd() < 0.72;
+        gg.addColorStop(0, warm ? "#ffba66" : "#d63042");
+        gg.addColorStop(1, warm ? "#b8501a" : "#6a1020");
+        e.fillStyle = gg;
+        drawArch(e, -4);
+      }
+      // Stone tracery mullions.
+      b.fillStyle = rgb(120, 128, 136);
+      b.fillRect(cx - 3, top + 8, 6, h - 8);
+      b.fillRect(cx - w / 2, top + h * 0.55, w, 5);
+      // Snow ledge on sill.
+      b.fillStyle = rgb(228, 236, 245);
+      b.fillRect(cx - w / 2 - 12, top + h + 2, w + 24, 9);
+    }
+  }
+  const map = repeat(colorTex(base.c));
+  const emissive = repeat(colorTex(glow.c));
+  const normal = repeat(dataTex(normalFromHeight(height.c, 2.4)));
+  const roughness = repeat(dataTex(rough.c));
+  return { map, emissive, normal, roughness };
+}
+
 /** Far towers seen through the haze: flat silhouettes in the fog colour, pricked with lit windows. */
 export function skylineTexture(fog: number) {
   const size = 256;
@@ -391,190 +551,330 @@ export function skylineTexture(fog: number) {
 
 const PX = 8;
 
-/** Wet asphalt for a whole zone: sidewalks with curbs, lane markings, manholes, cracks and puddles. */
-export function groundTextures(zone: Zone) {
+/** District-specific ground albedo, roughness and optional emissive map (e.g. Ash Ward molten ember cracks). */
+export function groundTextures(zone: Zone): { map: THREE.CanvasTexture; roughness: THREE.CanvasTexture; emissive?: THREE.CanvasTexture } {
   const w = Math.round(zone.w * PX);
   const h = Math.round(zone.h * PX);
-  const rnd = mulberry(zone.nation.length * 31 + 7);
+  const rnd = mulberry(zone.nation.length * 31 + zone.nation.charCodeAt(0) * 19 + 7);
   const col = canvas(w, h);
   const rough = canvas(w, h);
   const c = col.ctx;
   const r = rough.ctx;
+  const nation = zone.id === "memory" ? "ash" : zone.nation;
   const g = new THREE.Color(zone.env.ground);
   const hex = (k: number, a = 1) => rgb(g.r * 255 * k, g.g * 255 * k, g.b * 255 * k, a);
+
   c.fillStyle = hex(1);
   c.fillRect(0, 0, w, h);
-  r.fillStyle = grey(120);
+  r.fillStyle = grey(nation === "lanterns" ? 72 : nation === "snow" ? 185 : 122);
   r.fillRect(0, 0, w, h);
-  // Patched asphalt: large soft tonal variation, then aggregate speckle.
+
+  // Base tonal mottling & aggregate.
   for (let i = 0; i < (w * h) / 900; i++) {
-    c.fillStyle = hex(0.8 + rnd() * 0.4, 0.25);
+    c.fillStyle = hex(0.8 + rnd() * 0.4, 0.28);
     c.beginPath();
     c.arc(rnd() * w, rnd() * h, 8 + rnd() * 40, 0, Math.PI * 2);
     c.fill();
   }
-  for (let i = 0; i < (w * h) / 40; i++) {
-    c.fillStyle = hex(0.7 + rnd() * 0.7, 0.6);
+  for (let i = 0; i < (w * h) / 45; i++) {
+    c.fillStyle = hex(0.72 + rnd() * 0.65, 0.55);
     c.fillRect(rnd() * w, rnd() * h, 1, 1);
   }
-  // Repaired trench strips.
-  for (let i = 0; i < 18; i++) {
-    const vertical = rnd() < 0.5;
-    const len = (10 + rnd() * 40) * PX;
-    const x = rnd() * w;
-    const y = rnd() * h;
-    c.fillStyle = hex(0.78, 0.8);
-    if (vertical) c.fillRect(x, y, 1.2 * PX, len);
-    else c.fillRect(x, y, len, 1.2 * PX);
+
+  // ---------- District-unique surface treatments ----------
+  if (nation === "reeds") {
+    // Mossy silt patches & flooded marsh wash across the low lots.
+    for (let i = 0; i < 160; i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      const rad = (1.5 + rnd() * 5.5) * PX;
+      const grad = c.createRadialGradient(x, y, 0, x, y, rad);
+      grad.addColorStop(0, "rgba(44, 68, 46, 0.55)");
+      grad.addColorStop(1, "rgba(44, 68, 46, 0)");
+      c.fillStyle = grad;
+      c.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+  } else if (nation === "snow") {
+    // Snow-blanketed cobblestones & flagstones with gleaming wind-swept snowdrifts and frozen ice sheets.
+    c.strokeStyle = "rgba(86, 98, 114, 0.45)";
+    c.lineWidth = 1;
+    for (let x = 0; x < w; x += 2.2 * PX) {
+      c.beginPath();
+      c.moveTo(x, 0);
+      c.lineTo(x, h);
+      c.stroke();
+    }
+    for (let y = 0; y < h; y += 2.2 * PX) {
+      c.beginPath();
+      c.moveTo(0, y);
+      c.lineTo(w, y);
+      c.stroke();
+    }
+    // Deep snowdrifts across the ground.
+    for (let i = 0; i < 240; i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      const rx = (2 + rnd() * 7) * PX;
+      const ry = rx * (0.45 + rnd() * 0.5);
+      const a = rnd() * Math.PI;
+      c.fillStyle = `rgba(216, 228, 240, ${0.35 + rnd() * 0.45})`;
+      c.beginPath();
+      c.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
+      c.fill();
+      r.fillStyle = grey(230);
+      r.beginPath();
+      r.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
+      r.fill();
+    }
+    // Swept dark-slate ceremonial path along the Thousand Steps.
+    const rd = zone.pois.road;
+    const startX = Math.max(12, zone.pois.village.x - 4) * PX;
+    const endX = (zone.fortress ? zone.fortress.x - 2 : zone.w * 0.72) * PX;
+    c.fillStyle = "rgba(74, 84, 96, 0.8)";
+    c.fillRect(startX, (rd.y - 4.5) * PX, Math.max(10, endX - startX), 9 * PX);
+    // Frozen mirror ice patches.
+    for (let i = 0; i < 95; i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      const rx = (1.2 + rnd() * 3.8) * PX;
+      const ry = rx * (0.45 + rnd() * 0.5);
+      const a = rnd() * Math.PI;
+      c.fillStyle = "rgba(130, 168, 198, 0.55)";
+      c.beginPath();
+      c.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
+      c.fill();
+      r.fillStyle = grey(12);
+      r.beginPath();
+      r.ellipse(x, y, rx * 0.9, ry * 0.9, a, 0, Math.PI * 2);
+      r.fill();
+    }
+  } else if (nation === "tides") {
+    // Concrete dock slabs + timber planked southern pier deck + industrial hazard bay markings.
+    const quayY = Math.round(zone.h * 0.675);
+    c.strokeStyle = "rgba(24, 28, 32, 0.65)";
+    c.lineWidth = 1.2;
+    for (let x = 0; x < w; x += 5 * PX) {
+      c.beginPath();
+      c.moveTo(x, 0);
+      c.lineTo(x, (quayY + 2) * PX);
+      c.stroke();
+    }
+    for (let y = 0; y < (quayY + 2) * PX; y += 5 * PX) {
+      c.beginPath();
+      c.moveTo(0, y);
+      c.lineTo(w, y);
+      c.stroke();
+    }
+    // Weathered timber pier planking along the southern waterfront.
+    const pierY = quayY * PX;
+    c.fillStyle = rgb(72, 56, 44);
+    c.fillRect(0, pierY, w, h - pierY);
+    r.fillStyle = grey(150);
+    r.fillRect(0, pierY, w, h - pierY);
+    for (let y = pierY; y < h; y += 0.45 * PX) {
+      const k = 0.78 + rnd() * 0.34;
+      c.fillStyle = rgb(78 * k, 60 * k, 46 * k);
+      c.fillRect(0, y, w, 0.36 * PX);
+      c.fillStyle = "rgba(14, 12, 10, 0.75)";
+      c.fillRect(0, y + 0.36 * PX, w, 0.09 * PX);
+    }
+    // Yellow/black industrial hazard stripe along the quay edge.
+    const edgeY = (quayY - 0.8) * PX;
+    c.fillStyle = rgb(210, 156, 26, 0.85);
+    c.fillRect(0, edgeY, w, 0.9 * PX);
+    c.fillStyle = "rgba(20, 20, 20, 0.85)";
+    for (let x = 0; x < w; x += 2.2 * PX) {
+      c.fillRect(x, edgeY, 1.1 * PX, 0.9 * PX);
+    }
+  } else if (nation === "lanterns") {
+    // Ornate Festival Square plaza paving around pois.water.
+    const sq = zone.pois.water;
+    const sx = sq.x * PX;
+    const sy = sq.y * PX;
+    const rad = 14.5 * PX;
+    c.fillStyle = rgb(44, 34, 48);
+    c.beginPath();
+    c.arc(sx, sy, rad, 0, Math.PI * 2);
+    c.fill();
+    for (const [rr, colStr] of [
+      [rad, "rgba(220, 40, 70, 0.75)"],
+      [rad * 0.72, "rgba(240, 175, 45, 0.6)"],
+      [rad * 0.42, "rgba(0, 220, 255, 0.65)"],
+    ] as const) {
+      c.strokeStyle = colStr;
+      c.lineWidth = 3;
+      c.beginPath();
+      c.arc(sx, sy, rr, 0, Math.PI * 2);
+      c.stroke();
+    }
+    r.fillStyle = grey(36);
+    r.beginPath();
+    r.arc(sx, sy, rad, 0, Math.PI * 2);
+    r.fill();
+  } else if (nation === "ash") {
+    // Ash drifts over scorched black stone.
+    for (let i = 0; i < 190; i++) {
+      const x = rnd() * w;
+      const y = rnd() * h;
+      const rx = (1.5 + rnd() * 5.5) * PX;
+      const ry = rx * (0.4 + rnd() * 0.5);
+      const a = rnd() * Math.PI;
+      c.fillStyle = `rgba(120, 108, 100, ${0.22 + rnd() * 0.28})`;
+      c.beginPath();
+      c.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
+      c.fill();
+      r.fillStyle = grey(220);
+      r.beginPath();
+      r.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
+      r.fill();
+    }
   }
 
-  // Sidewalks with curbs.
+  // Sidewalks with curbs around urban buildings (skip shipping containers and snow cloister edges).
   for (const b of zone.buildings) {
-    const x0 = (b.x - 2.4) * PX;
-    const y0 = (b.y - 2.4) * PX;
-    const ww = (b.w + 4.8) * PX;
-    const hh = (b.h + 4.8) * PX;
-    // Curb stone: a pale band with a dark gutter line outside it.
-    c.fillStyle = rgb(30, 30, 30, 0.6);
+    if (b.style === "container") continue;
+    const pad = nation === "snow" ? 1.8 : 2.2;
+    const x0 = (b.x - pad) * PX;
+    const y0 = (b.y - pad) * PX;
+    const ww = (b.w + pad * 2) * PX;
+    const hh = (b.h + pad * 2) * PX;
+    c.fillStyle = rgb(24, 24, 24, 0.55);
     c.fillRect(x0 - 3, y0 - 3, ww + 6, hh + 6);
-    c.fillStyle = rgb(150, 148, 142);
+    c.fillStyle = nation === "snow" ? rgb(186, 196, 206) : nation === "lanterns" ? rgb(92, 86, 102) : nation === "ash" ? rgb(96, 86, 80) : rgb(142, 140, 134);
     c.fillRect(x0, y0, ww, hh);
-    c.fillStyle = rgb(112, 110, 106);
+    c.fillStyle = nation === "snow" ? rgb(156, 166, 178) : nation === "lanterns" ? rgb(68, 62, 78) : nation === "ash" ? rgb(74, 66, 62) : rgb(106, 104, 100);
     c.fillRect(x0 + 0.3 * PX, y0 + 0.3 * PX, ww - 0.6 * PX, hh - 0.6 * PX);
-    r.fillStyle = grey(170);
+    r.fillStyle = grey(nation === "lanterns" ? 90 : 175);
     r.fillRect(x0, y0, ww, hh);
-    // Slab joints and stains.
-    c.strokeStyle = rgb(70, 68, 66, 0.8);
-    c.lineWidth = 1;
-    for (let x = b.x - 2.4; x < b.x + b.w + 2.4; x += 1.6) {
-      c.beginPath();
-      c.moveTo(x * PX, y0);
-      c.lineTo(x * PX, y0 + hh);
-      c.stroke();
-    }
-    for (let y = b.y - 2.4; y < b.y + b.h + 2.4; y += 1.6) {
-      c.beginPath();
-      c.moveTo(x0, y * PX);
-      c.lineTo(x0 + ww, y * PX);
-      c.stroke();
-    }
-    for (let i = 0; i < 6; i++) {
-      c.fillStyle = rgb(60, 56, 52, 0.25);
-      c.beginPath();
-      c.arc(x0 + rnd() * ww, y0 + rnd() * hh, 3 + rnd() * 10, 0, Math.PI * 2);
-      c.fill();
-    }
   }
-  // Contact shadows where walls meet the sidewalk (baked ambient occlusion).
+
+  // Contact shadows under buildings (baked ambient occlusion).
   c.save();
-  c.shadowColor = "rgba(0,0,0,0.7)";
+  c.shadowColor = "rgba(0,0,0,0.72)";
   c.shadowBlur = 1.6 * PX;
   for (const b of zone.buildings) {
-    c.fillStyle = rgb(20, 20, 20);
+    c.fillStyle = rgb(18, 18, 18);
     c.fillRect(b.x * PX, b.y * PX, b.w * PX, b.h * PX);
   }
   c.restore();
-  // Building footprint itself (hidden under walls) stays dark.
   for (const b of zone.buildings) {
-    c.fillStyle = rgb(20, 20, 20);
+    c.fillStyle = rgb(18, 18, 18);
     c.fillRect(b.x * PX, b.y * PX, b.w * PX, b.h * PX);
   }
 
-  // Lane markings: double yellow centre lines and white dashes, worn.
-  for (let x = 20; x < zone.w; x += 20) {
-    for (let y = 0; y < zone.h; y += 0.5) {
-      if (rnd() < 0.2) continue;
-      c.fillStyle = rgb(196, 160, 60, 0.55);
-      c.fillRect(x * PX - 3, y * PX, 1.5, 0.5 * PX);
-      c.fillRect(x * PX + 2, y * PX, 1.5, 0.5 * PX);
+  // Road lane markings ONLY in urban asphalt districts (reeds, lanterns, ash) — NOT on snow cloisters or timber docks!
+  if (nation === "reeds" || nation === "lanterns" || nation === "ash") {
+    const step = nation === "lanterns" ? 17 : nation === "reeds" ? 23 : 21;
+    const alpha = nation === "lanterns" ? 0.72 : nation === "ash" ? 0.35 : 0.45;
+    for (let x = step; x < zone.w; x += step) {
+      for (let y = 0; y < zone.h; y += 0.5) {
+        if (rnd() < 0.22) continue;
+        c.fillStyle = nation === "lanterns" ? rgb(235, 185, 50, alpha) : rgb(186, 148, 56, alpha);
+        c.fillRect(x * PX - 3, y * PX, 1.5, 0.5 * PX);
+        c.fillRect(x * PX + 2, y * PX, 1.5, 0.5 * PX);
+      }
     }
-    for (let y = 0; y < zone.h; y += 6) {
-      c.fillStyle = rgb(210, 210, 200, 0.4);
-      c.fillRect((x + 5) * PX, y * PX, 1.5, 3 * PX);
-      c.fillRect((x - 5) * PX, y * PX, 1.5, 3 * PX);
+    for (let y = step; y < zone.h; y += step) {
+      for (let x = 0; x < zone.w; x += 0.5) {
+        if (rnd() < 0.22) continue;
+        c.fillStyle = nation === "lanterns" ? rgb(235, 185, 50, alpha) : rgb(186, 148, 56, alpha);
+        c.fillRect(x * PX, y * PX - 3, 0.5 * PX, 1.5);
+        c.fillRect(x * PX, y * PX + 2, 0.5 * PX, 1.5);
+      }
     }
   }
-  for (let y = 20; y < zone.h; y += 20) {
-    for (let x = 0; x < zone.w; x += 0.5) {
-      if (rnd() < 0.2) continue;
-      c.fillStyle = rgb(196, 160, 60, 0.55);
-      c.fillRect(x * PX, y * PX - 3, 0.5 * PX, 1.5);
-      c.fillRect(x * PX, y * PX + 2, 0.5 * PX, 1.5);
-    }
-  }
-  // Manhole covers.
-  for (let i = 0; i < 30; i++) {
-    const x = rnd() * w;
-    const y = rnd() * h;
-    c.fillStyle = rgb(48, 46, 44);
-    c.beginPath();
-    c.arc(x, y, 0.4 * PX, 0, Math.PI * 2);
-    c.fill();
-    c.strokeStyle = rgb(90, 86, 80);
-    c.lineWidth = 1;
-    c.stroke();
-    r.fillStyle = grey(70);
-    r.beginPath();
-    r.arc(x, y, 0.4 * PX, 0, Math.PI * 2);
-    r.fill();
-  }
-  // Oil stains (slick and smooth).
-  for (let i = 0; i < 120; i++) {
-    const x = rnd() * w;
-    const y = rnd() * h;
-    const rad = (0.3 + rnd() * 1.2) * PX;
-    const grad = c.createRadialGradient(x, y, 0, x, y, rad);
-    grad.addColorStop(0, "rgba(12,12,14,0.55)");
-    grad.addColorStop(1, "rgba(12,12,14,0)");
-    c.fillStyle = grad;
-    c.fillRect(x - rad, y - rad, rad * 2, rad * 2);
-    r.fillStyle = grey(60, 0.5);
-    r.beginPath();
-    r.arc(x, y, rad * 0.6, 0, Math.PI * 2);
-    r.fill();
-  }
-  // Cracks with tar sealant.
-  for (let i = 0; i < 320; i++) {
+
+  // Cracks, oil stains & puddles.
+  for (let i = 0; i < 240; i++) {
     let x = rnd() * w;
     let y = rnd() * h;
-    c.strokeStyle = rnd() < 0.4 ? "rgba(8,8,8,0.85)" : "rgba(20,20,22,0.6)";
+    c.strokeStyle = rnd() < 0.4 ? "rgba(8,8,8,0.8)" : "rgba(20,20,22,0.55)";
     c.lineWidth = 0.6 + rnd() * 1.6;
     c.beginPath();
     c.moveTo(x, y);
-    for (let k = 0; k < 7; k++) {
-      x += (rnd() - 0.5) * 34;
-      y += (rnd() - 0.5) * 34;
+    for (let k = 0; k < 6; k++) {
+      x += (rnd() - 0.5) * 32;
+      y += (rnd() - 0.5) * 32;
       c.lineTo(x, y);
     }
     c.stroke();
   }
-  // Puddles: darker, mirror-smooth, with a soft damp rim.
-  for (let i = 0; i < 180; i++) {
+
+  // Puddles: abundant mirror puddles in reeds & lanterns, moderate in tides, sparse in ash.
+  const puddleCount = nation === "reeds" ? 260 : nation === "lanterns" ? 230 : nation === "tides" ? 150 : nation === "snow" ? 30 : 40;
+  for (let i = 0; i < puddleCount; i++) {
     const x = rnd() * w;
     const y = rnd() * h;
-    const rx = (0.6 + rnd() * 2.8) * PX;
+    const rx = (0.7 + rnd() * (nation === "reeds" ? 4.2 : 2.8)) * PX;
     const ry = rx * (0.4 + rnd() * 0.6);
     const a = rnd() * Math.PI;
-    c.fillStyle = hex(0.8, 0.6);
-    c.beginPath();
-    c.ellipse(x, y, rx * 1.25, ry * 1.25, a, 0, Math.PI * 2);
-    c.fill();
-    c.fillStyle = hex(0.55);
+    c.fillStyle = hex(0.65, 0.65);
     c.beginPath();
     c.ellipse(x, y, rx, ry, a, 0, Math.PI * 2);
     c.fill();
-    r.fillStyle = grey(70);
-    r.beginPath();
-    r.ellipse(x, y, rx * 1.25, ry * 1.25, a, 0, Math.PI * 2);
-    r.fill();
     r.fillStyle = grey(6);
     r.beginPath();
     r.ellipse(x, y, rx * 0.9, ry * 0.9, a, 0, Math.PI * 2);
     r.fill();
   }
+
+  // Ash Ward: glowing subterranean ember fissures burned into an emissive canvas!
+  let emissive: THREE.CanvasTexture | undefined;
+  if (nation === "ash") {
+    const em = canvas(w, h);
+    const ec = em.ctx;
+    ec.fillStyle = "#000";
+    ec.fillRect(0, 0, w, h);
+    const drawCrack = (x0: number, y0: number, segs: number, stepLen: number, width: number, bright: number) => {
+      let x = x0;
+      let y = y0;
+      ec.lineCap = "round";
+      ec.lineJoin = "round";
+      // Soft red-orange heat halo.
+      ec.strokeStyle = `rgba(255, 68, 12, ${0.42 * bright})`;
+      ec.lineWidth = width * 3.4;
+      ec.beginPath();
+      ec.moveTo(x, y);
+      const pts: [number, number][] = [[x, y]];
+      for (let k = 0; k < segs; k++) {
+        x += (rnd() - 0.45) * stepLen;
+        y += (rnd() - 0.5) * stepLen;
+        pts.push([x, y]);
+        ec.lineTo(x, y);
+      }
+      ec.stroke();
+      // White-hot molten core.
+      ec.strokeStyle = `rgba(255, 195, 75, ${0.95 * bright})`;
+      ec.lineWidth = width;
+      ec.beginPath();
+      pts.forEach(([px, py], idx) => (idx === 0 ? ec.moveTo(px, py) : ec.lineTo(px, py)));
+      ec.stroke();
+      // Charred edge in albedo.
+      c.strokeStyle = "rgba(10, 6, 4, 0.9)";
+      c.lineWidth = width * 2.2;
+      c.beginPath();
+      pts.forEach(([px, py], idx) => (idx === 0 ? c.moveTo(px, py) : c.lineTo(px, py)));
+      c.stroke();
+    };
+    // Dense glowing fissures around River of Embers and Road of Cinders.
+    const rv = zone.pois.water;
+    for (let i = 0; i < 28; i++) {
+      drawCrack((rv.x + (rnd() - 0.5) * 28) * PX, (rv.y + (rnd() - 0.5) * 18) * PX, 7, 26, 2.2 + rnd() * 2, 1);
+    }
+    const rd = zone.pois.road;
+    for (let i = 0; i < 22; i++) {
+      drawCrack((rd.x + (rnd() - 0.5) * 40) * PX, (rd.y + (rnd() - 0.5) * 16) * PX, 6, 24, 1.6 + rnd() * 1.6, 0.85);
+    }
+    // Scattered ember cracks across the whole ward.
+    for (let i = 0; i < 45; i++) {
+      drawCrack(rnd() * w, rnd() * h, 5, 22, 1.2 + rnd() * 1.4, 0.7);
+    }
+    emissive = colorTex(em.c, 8);
+  }
+
   const map = colorTex(col.c, 16);
   const roughness = dataTex(rough.c, 16);
-  return { map, roughness };
+  return { map, roughness, emissive };
 }
 
 // ---------- Tiled surface detail ----------
@@ -755,4 +1055,29 @@ export function smokePuff() {
     ctx.fillRect(0, 0, 128, 128);
   }
   return new THREE.CanvasTexture(c);
+}
+
+/** Diagonal hazard stripes (red/white for road-closed sawhorses or yellow/black for concrete barriers). */
+export function barricadeStripeTexture(variant: "red" | "yellow") {
+  const size = 128;
+  const { c, ctx } = canvas(size, size);
+  ctx.fillStyle = variant === "red" ? "#d8d6d0" : "#dba018";
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = variant === "red" ? "#b81c22" : "#181a1c";
+  for (let x = -size; x < size * 2; x += 32) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + 16, 0);
+    ctx.lineTo(x - 48, size);
+    ctx.lineTo(x - 64, size);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // Light weathering grime.
+  const rnd = mulberry(variant === "red" ? 113 : 229);
+  for (let i = 0; i < 180; i++) {
+    ctx.fillStyle = `rgba(20,18,16,${0.05 + rnd() * 0.14})`;
+    ctx.fillRect(rnd() * size, rnd() * size, 2 + rnd() * 8, 2 + rnd() * 6);
+  }
+  return repeat(colorTex(c, 4), 2, 1);
 }

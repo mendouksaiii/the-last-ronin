@@ -41,6 +41,7 @@ export function GameScreen({ save, onEnding }: Props) {
   const [offer, setOffer] = useState<Mission | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [failed, setFailed] = useState(false);
+  const [contextLost, setContextLost] = useState(false);
   const [, setVersion] = useState(0);
   const touch = useCoarsePointer();
 
@@ -64,7 +65,7 @@ export function GameScreen({ save, onEnding }: Props) {
     );
     let renderer: Renderer;
     try {
-      renderer = new Renderer(host, game, window.matchMedia("(pointer: coarse)").matches);
+      renderer = new Renderer(host, game, window.matchMedia("(pointer: coarse)").matches, setContextLost);
     } catch {
       setFailed(true);
       return;
@@ -106,9 +107,9 @@ export function GameScreen({ save, onEnding }: Props) {
 
   const overlay = !!comic || !!offer || !!panel;
   useEffect(() => {
-    if (gameRef.current) gameRef.current.paused = overlay;
-    if (overlay) document.exitPointerLock?.();
-  }, [overlay]);
+    if (gameRef.current) gameRef.current.paused = overlay || contextLost;
+    if (overlay || contextLost) document.exitPointerLock?.();
+  }, [overlay, contextLost]);
 
   // M opens the world map and I the quest log, as long as no story page is showing.
   const blocked = !!comic || !!offer;
@@ -143,6 +144,12 @@ export function GameScreen({ save, onEnding }: Props) {
         </div>
       )}
 
+      {contextLost && !failed && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/85 p-6 text-center">
+          <p className="max-w-sm border border-border bg-secondary px-4 py-3 text-sm font-bold text-foreground">Restoring graphics context...</p>
+        </div>
+      )}
+
       {hud && game && (
         // Keep keyboard focus off the HUD so Space never re-triggers a clicked button.
         <div className={cn("pointer-events-none absolute inset-0 transition-opacity duration-300", cine && "opacity-0")} onMouseDown={(ev) => ev.preventDefault()}>
@@ -157,13 +164,13 @@ export function GameScreen({ save, onEnding }: Props) {
 
           <div className="absolute right-2 top-2 flex flex-col items-end gap-2 sm:right-4 sm:top-4">
             <div className="pointer-events-auto flex gap-1.5">
-              <Button variant="hud" size="sm" disabled={hud.memory} onClick={() => setPanel("map")} title="City map (M)">
+              <Button variant="hud" size="sm" className="whitespace-nowrap" disabled={hud.memory} onClick={() => setPanel("map")} title="City map (M)">
                 <MapIcon /> <span className="hidden md:inline">Map</span>
               </Button>
-              <Button variant="hud" size="sm" onClick={() => setPanel("log")} title="Quest log (I)">
+              <Button variant="hud" size="sm" className="whitespace-nowrap" onClick={() => setPanel("log")} title="Quest log (I)">
                 <ScrollText /> <span className="hidden md:inline">Quests</span>
               </Button>
-              <Button variant="hud" size="sm" onClick={() => game.returnToVillage()} title={hud.memory ? "Leave the memory" : "Return to the hideout"}>
+              <Button variant="hud" size="sm" className="whitespace-nowrap" onClick={() => game.returnToVillage()} title={hud.memory ? "Leave the memory" : "Return to the hideout"}>
                 <Home /> <span className="hidden md:inline">{hud.memory ? "Leave memory" : "Hideout"}</span>
               </Button>
             </div>

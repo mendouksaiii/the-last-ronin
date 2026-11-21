@@ -14,8 +14,18 @@ export function loadSave(): SaveData | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
-    const save = { ...newSave(), ...(JSON.parse(raw) as Partial<SaveData>) };
-    if (!(save.weapon in WEAPONS)) save.weapon = "katana";
+    const parsed = JSON.parse(raw) as Partial<SaveData>;
+    const base = newSave();
+    const save: SaveData = {
+      level: typeof parsed.level === "number" && Number.isFinite(parsed.level) && parsed.level >= 1 ? Math.floor(parsed.level) : base.level,
+      xp: typeof parsed.xp === "number" && Number.isFinite(parsed.xp) && parsed.xp >= 0 ? Math.floor(parsed.xp) : base.xp,
+      done: Array.isArray(parsed.done) ? parsed.done.filter((id): id is string => typeof id === "string") : [],
+      nation: parsed.nation && parsed.nation in NATIONS ? parsed.nation : base.nation,
+      visited: Array.isArray(parsed.visited) ? parsed.visited.filter((id): id is NationId => typeof id === "string" && id in NATIONS) : [],
+      prologue: Boolean(parsed.prologue),
+      weapon: parsed.weapon && parsed.weapon in WEAPONS ? parsed.weapon : base.weapon,
+    };
+    if (!unlockedWeapons(save).includes(save.weapon)) save.weapon = "katana";
     return save;
   } catch {
     return null;

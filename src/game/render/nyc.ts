@@ -397,22 +397,22 @@ export function farSkyline(zone: Zone, group: THREE.Group, keep: Keep) {
   };
   const cx = zone.w / 2;
   const cz = zone.h / 2;
-  // A ring of towers out in the haze.
+  // A ring of towers out in the haze beyond the outer avenues.
   for (let i = 0; i < 64; i++) {
     const a = (i / 64) * Math.PI * 2 + rnd() * 0.08;
-    const rx = zone.w / 2 + 75 + rnd() * 110;
-    const rz = zone.h / 2 + 75 + rnd() * 110;
+    const rx = zone.w / 2 + 170 + rnd() * 165;
+    const rz = zone.h / 2 + 170 + rnd() * 165;
     const x = cx + Math.cos(a) * rx;
     const z = cz + Math.sin(a) * rz;
-    const w = 14 + rnd() * 22;
-    const h = 40 + rnd() * rnd() * 170;
+    const w = 16 + rnd() * 24;
+    const h = 48 + rnd() * rnd() * 190;
     add(facadeBox(w, h, w, i * 13), body, x, h / 2, z);
     if (h > 90 && rnd() < 0.5) add(facadeBox(w * 0.6, h * 0.25, w * 0.6, i), body, x, h + h * 0.125, z);
     if (h > 120) add(new THREE.SphereGeometry(0.7, 6, 4), red, x, h + (h > 90 ? h * 0.25 : 0) + 1, z);
   }
   // A great deco tower in stepped tiers with a floodlit top and mast.
   const ex = cx + zone.w * 0.2;
-  const ez = -150;
+  const ez = -210;
   let y = 0;
   for (const [w, h] of [[46, 70], [36, 60], [28, 50], [20, 26], [12, 14]]) {
     add(facadeBox(w, h, w, w), body, ex, y + h / 2, ez);
@@ -423,7 +423,7 @@ export function farSkyline(zone: Zone, group: THREE.Group, keep: Keep) {
   add(new THREE.CylinderGeometry(0.3, 0.6, 22, 6), dark, ex, y + 35, ez);
   add(new THREE.SphereGeometry(1, 8, 6), red, ex, y + 46, ez);
   // A tower crowned with stacked steel arches, lit from within.
-  const kx = zone.w + 140;
+  const kx = zone.w + 205;
   const kz = cz - 20;
   add(facadeBox(30, 110, 30, 77), body, kx, 55, kz);
   add(facadeBox(22, 45, 22, 78), body, kx, 132, kz);

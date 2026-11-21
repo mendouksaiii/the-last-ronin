@@ -22,14 +22,14 @@ export function StatusPanel({ hud }: { hud: HudState }) {
   const low = hud.hp / hud.maxHp < 0.3;
   const s = hud.stealth ? STEALTH[hud.stealth] : null;
   return (
-    <div className="w-56 border-l-4 border-primary bg-background/70 p-2 backdrop-blur-sm sm:w-72">
+    <div className="w-56 border border-border border-l-2 border-l-primary bg-background/90 p-2 sm:w-72">
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-display text-2xl leading-none tracking-wider text-foreground">{hud.hero}</span>
-        <span className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Lv {hud.level}</span>
+        <span className="text-xs font-bold uppercase tabular-nums tracking-widest text-muted-foreground">Lv {hud.level}</span>
       </div>
-      <div className={cn("relative mt-1.5 h-3.5", low && "animate-pulse")}>
+      <div className={cn("relative mt-1.5 h-3.5", low && "ring-1 ring-primary shadow-glow")}>
         <Bar value={hud.hp} max={hud.maxHp} className="bg-gradient-vermilion" />
-        <span className="absolute inset-0 flex items-center justify-end pr-1 text-[10px] font-bold leading-none text-primary-foreground">
+        <span className="absolute inset-0 flex items-center justify-end pr-1 text-[10px] font-bold leading-none tabular-nums text-primary-foreground">
           {hud.hp}
         </span>
       </div>
@@ -60,11 +60,11 @@ export function StatusPanel({ hud }: { hud: HudState }) {
 export function QuestTracker({ hud, hint }: { hud: HudState; hint: string | null }) {
   const o = hud.objective;
   if (!o) {
-    return hint ? <div className="w-56 border-r-4 border-accent bg-background/70 p-2 text-xs font-bold text-muted-foreground backdrop-blur-sm sm:w-72">{hint}</div> : null;
+    return hint ? <div className="w-56 border border-border border-r-2 border-r-accent bg-background/90 p-2 text-xs font-bold text-muted-foreground sm:w-72">{hint}</div> : null;
   }
   const Icon = CLASS_ICONS[o.cls];
   return (
-    <div className="w-56 border-r-4 border-accent bg-background/70 p-2 text-foreground backdrop-blur-sm sm:w-72">
+    <div className="w-56 border border-border border-r-2 border-r-accent bg-background/90 p-2 text-foreground sm:w-72">
       <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-accent">
         <Icon className="size-3.5" /> {o.cls}
       </div>
@@ -72,7 +72,7 @@ export function QuestTracker({ hud, hint }: { hud: HudState; hint: string | null
       <p className="mt-0.5 text-xs font-bold leading-snug text-foreground/85">
         {o.text}
         {o.need > 1 && (
-          <span className="ml-1 text-accent">
+          <span className="ml-1 tabular-nums text-accent">
             {o.got}/{o.need}
           </span>
         )}

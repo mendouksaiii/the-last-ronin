@@ -44,7 +44,18 @@ const Index = () => {
 
   if (screen === "game" && save) return <GameScreen save={save} onEnding={onEnding} />;
 
-  if (screen === "ending" && save) return <EndingScreen save={save} onExplore={() => setScreen("game")} onTitle={() => setScreen("title")} />;
+  if (screen === "ending" && save) {
+    return (
+      <EndingScreen
+        save={save}
+        onExplore={() => setScreen("game")}
+        onTitle={() => {
+          setStored(loadSave() ?? save);
+          setScreen("title");
+        }}
+      />
+    );
+  }
 
   return <TitleScreen save={stored} onContinue={() => stored && play(stored)} onNew={startNew} />;
 };

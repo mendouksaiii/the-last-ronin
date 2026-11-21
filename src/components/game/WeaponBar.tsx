@@ -30,12 +30,12 @@ export function WeaponBar({ hud, onWeapon }: Props) {
                 onWeapon(id);
               }}
               className={cn(
-                "no-select relative flex size-11 items-center justify-center border transition-colors",
-                on ? "border-primary bg-primary/25 text-foreground shadow-glow" : "border-border bg-background/70 text-muted-foreground hover:text-foreground",
+                "no-select relative flex size-11 items-center justify-center border transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+                on ? "border-primary bg-primary/25 text-foreground shadow-glow" : "border-border bg-background/90 text-muted-foreground hover:text-foreground",
               )}
             >
               <Icon className="size-5" />
-              <span className="absolute bottom-0 right-0.5 text-[9px] font-bold text-muted-foreground">{WEAPON_ORDER.indexOf(id) + 1}</span>
+              <span className="absolute bottom-0 right-0.5 text-[9px] font-bold tabular-nums text-muted-foreground">{WEAPON_ORDER.indexOf(id) + 1}</span>
             </button>
           );
         })}

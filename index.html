@@ -3,6 +3,45 @@
 
 <head>
   <meta charset="UTF-8" />
+  <script>
+    (function () {
+      if (window.__extensionErrorGuardInstalled) return;
+      window.__extensionErrorGuardInstalled = true;
+      function isExt(src, stack, msg) {
+        var s = (src || "") + " " + (stack || "");
+        return (
+          s.indexOf("chrome-extension://") !== -1 ||
+          s.indexOf("moz-extension://") !== -1 ||
+          s.indexOf("safari-extension://") !== -1 ||
+          (typeof msg === "string" && msg.indexOf("Failed to connect to MetaMask") !== -1)
+        );
+      }
+      window.addEventListener(
+        "error",
+        function (ev) {
+          var err = ev.error || {};
+          if (isExt(ev.filename, err.stack, ev.message || err.message)) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+          }
+        },
+        true
+      );
+      window.addEventListener(
+        "unhandledrejection",
+        function (ev) {
+          var reason = ev.reason;
+          var stack = reason && typeof reason === "object" ? reason.stack : "";
+          var msg = reason && typeof reason === "object" ? reason.message : String(reason || "");
+          if (isExt("", stack, msg)) {
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+          }
+        },
+        true
+      );
+    })();
+  </script>
   <link href="/favicon.ico" rel="icon shortcut">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="preconnect" href="https://fonts.googleapis.com">

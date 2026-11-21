@@ -11,21 +11,20 @@ const clamp01 = (k: number) => Math.max(0, Math.min(1, k));
 
 // ---------- Looks ----------
 
-const HERO_ACCENT: Record<WeaponId, number> = { katana: 0x8e1016, bo: 0x4b4b50, nunchaku: 0xb3121f, kusari: 0xc4561a };
-
 export function heroLook(w: WeaponId): Look {
   return {
-    skin: 0x4f5a3c,
-    cloth: 0x1c1c1e,
-    accent: HERO_ACCENT[w],
-    scale: w === "bo" ? 1.04 : w === "nunchaku" ? 0.95 : 1,
-    bulk: w === "bo" ? 1.2 : 1.1,
+    skin: 0x525e46,
+    cloth: 0x1b1a1c,
+    accent: 0x7c151c,
+    scale: 1.04,
+    bulk: 1.22,
     head: "turtle",
     gear: w,
-    eyes: 0xe8e0d0,
-    eyeGlow: 0.6,
-    shell: 0xc8b8a0,
-    cloak: 0x0f0f11,
+    eyes: 0xf3eee4,
+    eyeGlow: 0.95,
+    shell: 0x7c7872,
+    cloak: 0x101115,
+    outfit: "ronin",
     seed: 7,
   };
 }
@@ -86,14 +85,27 @@ export function bossLook(e: Enemy): Look {
 export function npcLook(n: Npc): Look {
   let h = 0;
   for (const ch of n.name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  // The blind street musician keeps his hood up (the seed picks the hood).
-  if (n.look === "biwa") return { ...survivorLook(h), cloth: 0x3a1418, accent: 0x2a1a16, gear: "biwa", skirt: 0.8, seed: h - (h % 88) + 55 };
+  if (n.role === "villager") h = (h * 31 + Math.abs(Math.round(n.home.x * 13 + n.home.y * 29))) >>> 0;
+  // The blind street musician: crimson-plum coat, ochre sash, hair bun & woven kasa.
+  if (n.look === "biwa") {
+    return {
+      ...survivorLook(10020),
+      cloth: 0x42151e,
+      shirt: 0x1e202b,
+      accent: 0xa27438,
+      gear: "biwa",
+      kasa: true,
+      skirt: 0.78,
+      seed: 10020,
+    };
+  }
   return survivorLook(h);
 }
 
-/** New Yorkers who stayed: work jackets, parkas and wool coats over jeans, every face their own. */
+/** New Yorkers who stayed: work jackets, parkas and wool coats over layered shirts and jeans. */
 export function survivorLook(h: number): Look {
   const coats = [0x2a3040, 0x3e4232, 0x1c1c1e, 0x5a4a36, 0x4a2226, 0x48484c, 0x6a5a40, 0x26363a, 0x3a2e2a];
+  const shirts = [0xb8b2a6, 0x3b444f, 0x625042, 0x2a2d32, 0x7c342e, 0x4b5645];
   const pants = [0x2a3448, 0x1e2430, 0x2a2a2c, 0x4a4234, 0x3a3a3e, 0x34302a];
   const accents = [0x7a2a24, 0x2e4a5a, 0x6a5a3a, 0x3a3a3e, 0x5a3a52, 0x8a6a2a, 0x2a2a2e];
   const skins = [0xe2b99c, 0xc9967a, 0xa5735a, 0x7c5440, 0x553a2c, 0xd8a688, 0x8e6248];
@@ -102,6 +114,7 @@ export function survivorLook(h: number): Look {
   return {
     skin: skins[Math.floor(h / 31) % skins.length],
     cloth: coats[h % coats.length],
+    shirt: shirts[Math.floor(h / 13) % shirts.length],
     pants: pants[Math.floor(h / 37) % pants.length],
     accent: accents[(h >> 3) % accents.length],
     scale: (woman ? 0.92 : 0.97) + ((h >> 5) % 7) * 0.01,
@@ -156,18 +169,18 @@ export interface HeroPose {
   trail: boolean;
 }
 
-/** Natural gait layered on any pose: pelvis bob, weight shift, shoulders counter-rotating the hips and arms swinging against the legs. */
+/** Natural gait layered on any pose: pelvis weight shift, counter-rotating shoulders, and fluid arm swing. */
 export function gait(base: Pose, legs: number, phase: number, armSwing: [number, number]) {
   const s = Math.sin(phase);
   const c = Math.cos(phase);
   base.legs = legs;
   base.phase = phase;
-  // Lowest when the legs are spread, highest as the body passes over the planted foot.
-  base.drop += -(s * s) * legs * 0.07;
-  base.sway += c * legs * 0.028;
+  // Subtle pelvic drop as legs pass wide, balanced with stance lift in applyPose.
+  base.drop += -(s * s) * legs * 0.042;
+  base.sway += c * legs * 0.025;
   base.twist += -s * legs * 0.16;
-  base.armR = [base.armR[0] - s * legs * armSwing[0], base.armR[1], base.armR[2] - Math.max(0, -s) * legs * armSwing[0] * 0.6];
-  base.armL = [base.armL[0] + s * legs * armSwing[1], base.armL[1], base.armL[2] - Math.max(0, s) * legs * armSwing[1] * 0.6];
+  base.armR = [base.armR[0] - s * legs * armSwing[0], base.armR[1], base.armR[2] - Math.max(0, -s) * legs * armSwing[0] * 0.55];
+  base.armL = [base.armL[0] + s * legs * armSwing[1], base.armL[1], base.armL[2] - Math.max(0, s) * legs * armSwing[1] * 0.55];
   return base;
 }
 
@@ -250,6 +263,10 @@ export function heroPose(p: Player, time: number, sprint: boolean, combat: boole
   let yaw: number | null = null;
   let trail = false;
 
+  if (p.hp <= 0) {
+    return { pose: heroDeathPose(guard, a.kind === "broken" ? a.t : 0.85), yaw, trail };
+  }
+
   if (a.kind === "idle") {
     const sheathed = !drawn && !p.blocking;
     let pose = p.blocking ? mixPose(guard, BLOCK[w], 1) : sheathed ? mixPose(restPose(), CALM, 1) : guard;
@@ -257,7 +274,6 @@ export function heroPose(p: Player, time: number, sprint: boolean, combat: boole
     if (p.crouch) pose = mixPose(pose, { crouch: 0.55, lean: 0.4 }, 1);
     pose = locomotion(pose, p.speed, phase, sprint && p.speed > 4.5, time, sheathed || !relaxedOff, !sheathed);
     if (reach > 0) pose = mixPose(pose, REACH, reach);
-    if (p.hp <= 0) pose = deathPose(pose, 5, "back");
     return { pose, yaw, trail };
   }
 
@@ -288,7 +304,6 @@ export function heroPose(p: Player, time: number, sprint: boolean, combat: boole
     case "hurt":
       return { pose: mixPose(guard, { lean: -0.45 * Math.sin(k * Math.PI), twist: 0.3, head: -0.3, armR: [-0.3, 0.5, -0.5], crouch: 0.15 }, 1), yaw, trail };
     case "broken":
-      if (p.hp <= 0) return { pose: deathPose(guard, a.t, "back"), yaw, trail };
       return { pose: mixPose(guard, { crouch: 0.75, lean: 0.55, head: 0.3, armR: [-0.2, 0.2, -0.3], armL: [-0.2, 0.2, -0.3] }, 1), yaw, trail };
     case "stim":
       return { pose: mixPose(guard, { armL: [-2.2, -0.5, -2.3], head: -0.35, lean: -0.05 }, Math.sin(k * Math.PI) * 1.2), yaw, trail };
@@ -303,6 +318,76 @@ export function heroPose(p: Player, time: number, sprint: boolean, combat: boole
     default:
       return { pose: guard, yaw, trail };
   }
+}
+
+/**
+ * Ren's collapse when slain: reels from the fatal blow, drops heavy onto his knees,
+ * pitches face-down onto the street (keeping shell & scabbard clear above the asphalt),
+ * bounces once on impact and settles limp with arms sprawled.
+ */
+export function heroDeathPose(base: Pose, t: number): Pose {
+  const recoil = Math.sin(clamp01(t / 0.2) * Math.PI);
+  // 1. Sharp stagger from the lethal blow.
+  let pose = mixPose(
+    base,
+    {
+      lean: -0.4,
+      head: -0.45,
+      twist: 0.32,
+      armR: [-1.1, 0.75, -0.45],
+      armL: [-1.0, -0.65, -0.45],
+      wrist: 0.1,
+    },
+    ease(clamp01(t / 0.12)),
+  );
+  pose.drop += recoil * 0.02;
+  // 2. Drops heavy onto his knees.
+  const buckle = ease(clamp01((t - 0.15) / 0.32));
+  pose = mixPose(
+    pose,
+    {
+      crouch: 0.92,
+      drop: -0.22,
+      legs: 0,
+      lean: 0.35,
+      head: 0.5,
+      twist: -0.14,
+      armR: [-0.35, 0.35, -0.45],
+      armL: [-0.35, -0.35, -0.45],
+    },
+    buckle,
+  );
+  // 3. Topples forward onto the wet asphalt with gravity and one heavy bounce.
+  const ft = clamp01((t - 0.42) / 0.38);
+  const fallK = ft * ft;
+  const bounce = t > 0.8 ? Math.sin(clamp01((t - 0.8) / 0.25) * Math.PI) * Math.exp(-(t - 0.8) * 5) * 0.09 : 0;
+  const limp = clamp01((t - 0.8) / 0.45);
+  pose = mixPose(
+    pose,
+    {
+      crouch: 0.92 - fallK * 0.74,
+      drop: -0.22 - fallK * 0.46 + bounce * 0.38,
+      lean: 0.08,
+      head: -0.22 - limp * 0.12,
+      twist: -0.1,
+      sway: 0,
+    },
+    fallK,
+  );
+  pose.roll = (fallK - bounce) * Math.PI * 0.48;
+  pose.bank = fallK * 0.14;
+  // 4. Arms sprawl outward as he hits the pavement.
+  pose = mixPose(
+    pose,
+    {
+      armR: [-2.45, 0.75, -0.3],
+      armL: [-2.2, -0.65, -0.45],
+    },
+    ease(clamp01((t - 0.52) / 0.45)),
+  );
+  pose.look = 0.55 * limp;
+  pose.breath = 0;
+  return pose;
 }
 
 export type Fall = "back" | "forward" | "side";
@@ -410,14 +495,51 @@ export function enemyPose(e: Enemy, time: number, phase: number): { pose: Pose; 
   return { pose, laser, telegraph, trail };
 }
 
-export function npcPose(n: Npc, time: number, phase: number, speed: number): Pose {
+export function npcPose(n: Npc, time: number, phase: number, speed: number, heroRel?: { angle: number; dist: number }): Pose {
   const pose = mixPose(restPose(), E_IDLE, 1);
+  const seed = n.home.x * 0.7 + n.home.y * 0.3;
+
   if (n.look === "biwa") {
-    return mixPose(pose, { crouch: 0.7, armR: [-0.9, -0.4, -1.2], armL: [-1.1, -0.2, -1.6], head: 0.2 + Math.sin(time) * 0.05 }, 1);
+    return mixPose(
+      pose,
+      {
+        crouch: 0.68,
+        lean: 0.06,
+        armR: [-0.95 + Math.sin(time * 4.5) * 0.08, -0.35, -1.25 + Math.sin(time * 6.2) * 0.14],
+        armL: [-1.15, -0.22, -1.55 + Math.sin(time * 1.8) * 0.06],
+        head: 0.12 + Math.sin(time * 1.4) * 0.05,
+        look: Math.sin(time * 0.7) * 0.1,
+        breath: Math.sin(time * 1.8),
+      },
+      1,
+    );
   }
-  pose.lean = 0.15;
-  pose.head = 0.15;
-  pose.breath = Math.sin(time * 2);
-  pose.look = Math.sin(time * 0.35 + n.home.x) * 0.3;
-  return gait(pose, Math.min(1, speed / 4.5) * 0.75, phase, [0.35, 0.35]);
+
+  // Upright natural human carriage instead of slumped posture.
+  const walkAmt = Math.min(1, speed / 3.8);
+  pose.lean = 0.015 + walkAmt * 0.05;
+  pose.head = -0.02;
+  pose.breath = Math.sin(time * 1.9 + seed);
+
+  if (speed < 0.15) {
+    // Organic weight-shift, relaxed posture, and attentive glance/gesture toward Ren when nearby.
+    pose.sway = Math.sin(time * 0.65 + seed) * 0.022;
+    pose.twist = Math.sin(time * 0.42 + seed) * 0.04;
+    pose.armR = [-0.08, 0.13, -0.36];
+    pose.armL = [-0.1, 0.13, -0.44];
+    pose.look = Math.sin(time * 0.35 + seed) * 0.28;
+    if (heroRel && heroRel.dist < 6.5) {
+      const clampLook = Math.max(-0.9, Math.min(0.9, -heroRel.angle));
+      pose.look = clampLook;
+      if (n.role === "giver") {
+        // Subtle conversational nod and welcoming hand gesture.
+        const talk = Math.max(0, Math.sin(time * 2.1 + seed));
+        pose.armR = [-0.36 - talk * 0.18, 0.2, -0.82 - talk * 0.15];
+        pose.head = -0.03 + Math.sin(time * 2.4 + seed) * 0.045;
+      }
+    }
+    return pose;
+  }
+
+  return gait(pose, walkAmt * 0.72, phase, [0.38, 0.42]);
 }

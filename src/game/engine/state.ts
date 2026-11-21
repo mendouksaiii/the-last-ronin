@@ -15,11 +15,17 @@ export interface Rect {
   h: number;
 }
 
+export type BuildingKind = "brownstone" | "walkup" | "deco" | "glass" | "ruin" | "warehouse" | "container" | "cathedral";
+
 export interface Building extends Rect {
   height: number;
   /** Broken, open-topped ruin. */
   ruined: boolean;
   seed: number;
+  /** Explicit district architectural archetype; falls back to size/seed heuristics when omitted. */
+  style?: BuildingKind;
+  /** Optional colour accent (e.g., shipping container hull paint). */
+  color?: number;
 }
 
 /** Things that only decorate the streets. Cars and barriers also block movement and sight. */
@@ -176,6 +182,11 @@ export interface Npc extends Vec {
   home: Vec;
   t: number;
   walk: number;
+  pauseT?: number;
+  goal?: Vec | null;
+  vx?: number;
+  vy?: number;
+  steerDir?: number;
 }
 
 export interface Pickup extends Vec {

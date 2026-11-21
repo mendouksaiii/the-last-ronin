@@ -20,7 +20,7 @@ function Pad({ label, onDown, onUp, className, children }: { label: string; onDo
       onPointerUp={onUp}
       onPointerCancel={onUp}
       onPointerLeave={onUp}
-      className={cn("no-select pointer-events-auto absolute flex items-center justify-center rounded-full border border-border bg-background/60 text-foreground backdrop-blur-sm active:scale-95", className)}
+      className={cn("no-select pointer-events-auto absolute flex items-center justify-center rounded-full border border-border bg-background/80 text-foreground active:scale-95", className)}
     >
       {children}
     </button>
@@ -76,7 +76,7 @@ export function TouchControls({ game, hud }: { game: Game; hud: HudState }) {
       />
       <div
         ref={pad}
-        className="no-select pointer-events-auto absolute bottom-6 left-5 size-28 rounded-full border border-border bg-background/40 backdrop-blur-sm"
+        className="no-select pointer-events-auto absolute bottom-6 left-5 size-28 rounded-full border border-border bg-background/65"
         onPointerDown={(ev) => {
           ev.currentTarget.setPointerCapture(ev.pointerId);
           move(ev);

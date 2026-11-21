@@ -5,8 +5,8 @@ import { mulberry } from "../engine/world";
 import type { CityScene } from "./city";
 import type { Ground } from "./crowd";
 
-// Dressing that makes the blocks feel inhabited: towering holographic billboards cycling their
-// adverts, and strings of red paper lanterns slung across the streets that sway in the wind.
+// Dressing that makes each district's streets feel inhabited and distinct:
+// holographic billboards, festival lantern canopies, monastery prayer strings, and harbor work-lights.
 
 const ADS = 4;
 
@@ -28,7 +28,6 @@ function adAtlas() {
     ctx.strokeStyle = "rgba(255,255,255,0.7)";
     ctx.lineWidth = 6;
     ctx.strokeRect(10, y + 10, W - 20, H - 20);
-    // Scanlines.
     ctx.fillStyle = "rgba(255,255,255,0.06)";
     for (let s = y; s < y + H; s += 6) ctx.fillRect(0, s, W, 2);
     return y;
@@ -82,6 +81,7 @@ interface Board {
   mat: THREE.MeshBasicMaterial;
   tex: THREE.Texture;
   seed: number;
+  damaged: boolean;
 }
 
 interface Lantern {
@@ -90,8 +90,6 @@ interface Lantern {
   z: number;
   seed: number;
 }
-
-const NEON = [0x38e0ff, 0xff2a8a, 0xff2a30, 0xffa030, 0x9a5aff];
 
 export class Dressing {
   readonly group = new THREE.Group();
@@ -107,44 +105,122 @@ export class Dressing {
       return x;
     };
     const rnd = mulberry(zone.w * 13 + zone.nation.length * 7);
+    const nation = zone.id === "memory" ? "ash" : zone.nation;
+
+    // District-specific dressing density & colour palettes.
+    const cfg: Record<
+      Zone["nation"],
+      {
+        boards: number;
+        minBoardH: number;
+        boardPalette: number[];
+        damagedBoards: boolean;
+        cables: number;
+        lanternPalette: number[];
+        lanternLight: number;
+      }
+    > = {
+      reeds: {
+        boards: lowPower ? 2 : 3,
+        minBoardH: 14,
+        boardPalette: [0xff9438, 0x30c8a8, 0xd85a2a],
+        damagedBoards: true,
+        cables: lowPower ? 3 : 6,
+        lanternPalette: [0xff9038, 0x58c8a8, 0xffaa44],
+        lanternLight: 0xff8c38,
+      },
+      snow: {
+        boards: 0,
+        minBoardH: 99,
+        boardPalette: [0xb81a24],
+        damagedBoards: false,
+        cables: lowPower ? 5 : 10,
+        lanternPalette: [0xffb848, 0xb81a24, 0xffd078],
+        lanternLight: 0xffa848,
+      },
+      tides: {
+        boards: lowPower ? 2 : 4,
+        minBoardH: 14,
+        boardPalette: [0xffb038, 0x38d8c8, 0xe85a2a],
+        damagedBoards: false,
+        cables: lowPower ? 5 : 10,
+        lanternPalette: [0xffc860, 0x38e8b0, 0xffa038],
+        lanternLight: 0xffb848,
+      },
+      lanterns: {
+        boards: lowPower ? 10 : 18,
+        minBoardH: 16,
+        boardPalette: [0xff2088, 0x30f0ff, 0xffb028, 0xb044ff, 0xff2848],
+        damagedBoards: false,
+        cables: lowPower ? 12 : 24,
+        lanternPalette: [0xff2088, 0x30f0ff, 0xffaa30, 0xaa44ff, 0xff2838],
+        lanternLight: 0xff3a88,
+      },
+      ash: {
+        boards: lowPower ? 2 : 4,
+        minBoardH: 18,
+        boardPalette: [0xff4518, 0xc8102e, 0xff7020],
+        damagedBoards: true,
+        cables: 0,
+        lanternPalette: [0xff4518],
+        lanternLight: 0xff4518,
+      },
+    };
+    const dc = cfg[nation];
 
     // ---------- Billboards ----------
-    const atlas = keep(adAtlas());
-    const cx = zone.w / 2;
-    const cy = zone.h / 2;
-    const tall = zone.buildings.filter((b) => !b.ruined && b.height > 22).sort(() => rnd() - 0.5);
-    for (const b of tall.slice(0, lowPower ? 4 : 8)) this.billboard(b, cx, cy, atlas, rnd, city, ground, keep);
+    if (dc.boards > 0) {
+      const atlas = keep(adAtlas());
+      const cx = zone.w / 2;
+      const cy = zone.h / 2;
+      const tall = zone.buildings
+        .filter((b) => (!b.ruined || nation === "ash") && b.height > dc.minBoardH && b.style !== "container")
+        .sort(() => rnd() - 0.5);
+      for (const b of tall.slice(0, dc.boards)) {
+        this.billboard(b, cx, cy, atlas, rnd, city, ground, keep, dc.boardPalette, dc.damagedBoards);
+      }
+    }
 
-    // ---------- Lantern strings ----------
+    // ---------- Overhead lantern / work-light strings ----------
     const cables: THREE.BufferGeometry[] = [];
-    const want = lowPower ? 6 : 12;
-    const houses = [...zone.buildings].sort(() => rnd() - 0.5);
-    for (const a of houses) {
-      if (cables.length >= want) break;
-      for (const b of zone.buildings) {
-        if (a === b || cables.length >= want) continue;
-        const span = this.across(a, b, rnd, ground);
-        if (!span) continue;
-        const [p, q] = span;
-        const pts: THREE.Vector3[] = [];
-        const len = p.distanceTo(q);
-        for (let i = 0; i <= 16; i++) {
-          const t = i / 16;
-          const v = p.clone().lerp(q, t);
-          v.y -= len * 0.06 * 4 * t * (1 - t);
-          pts.push(v);
+    const want = dc.cables;
+    if (want > 0) {
+      const houses = [...zone.buildings].filter((b) => b.style !== "container").sort(() => rnd() - 0.5);
+      for (const a of houses) {
+        if (cables.length >= want) break;
+        for (const b of zone.buildings) {
+          if (a === b || b.style === "container" || cables.length >= want) continue;
+          const span = this.across(a, b, rnd, ground);
+          if (!span) continue;
+          const [p, q] = span;
+          const pts: THREE.Vector3[] = [];
+          const len = p.distanceTo(q);
+          for (let i = 0; i <= 16; i++) {
+            const t = i / 16;
+            const v = p.clone().lerp(q, t);
+            v.y -= len * 0.06 * 4 * t * (1 - t);
+            pts.push(v);
+          }
+          cables.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.02, 4));
+          const spacing = nation === "lanterns" ? 1.4 : 2.1;
+          const n = Math.floor(len / spacing);
+          for (let k = 1; k < n; k++) {
+            const t = k / n;
+            const v = p.clone().lerp(q, t);
+            v.y -= len * 0.06 * 4 * t * (1 - t) + 0.3;
+            this.lanterns.push({ x: v.x, y: v.y, z: v.z, seed: rnd() * 100 });
+          }
+          const mid = p.clone().lerp(q, 0.5);
+          city.lights.push({
+            pos: new THREE.Vector3(mid.x, mid.y - 1, mid.z),
+            color: dc.lanternLight,
+            intensity: nation === "lanterns" ? 18 : 14,
+            distance: 14,
+            flicker: 1,
+            seed: Math.floor(rnd() * 999),
+          });
+          break;
         }
-        cables.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.02, 4));
-        const n = Math.floor(len / 1.7);
-        for (let k = 1; k < n; k++) {
-          const t = k / n;
-          const v = p.clone().lerp(q, t);
-          v.y -= len * 0.06 * 4 * t * (1 - t) + 0.3;
-          this.lanterns.push({ x: v.x, y: v.y, z: v.z, seed: rnd() * 100 });
-        }
-        const mid = p.clone().lerp(q, 0.5);
-        city.lights.push({ pos: new THREE.Vector3(mid.x, mid.y - 1, mid.z), color: 0xff5a30, intensity: 14, distance: 13, flicker: 1, seed: Math.floor(rnd() * 999) });
-        break;
       }
     }
     if (cables.length) {
@@ -156,11 +232,15 @@ export class Dressing {
       }
     }
     if (this.lanterns.length) {
-      const g = keep(new THREE.SphereGeometry(0.17, 12, 8));
-      g.scale(1, 1.3, 1);
+      const g = keep(new THREE.SphereGeometry(nation === "tides" ? 0.13 : 0.17, 12, 8));
+      g.scale(1, nation === "tides" ? 1 : 1.35, 1);
       const m = new THREE.InstancedMesh(g, keep(new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false })), this.lanterns.length);
       const c = new THREE.Color();
-      this.lanterns.forEach((l, i) => m.setColorAt(i, c.set(i % 3 === 0 ? 0xffa040 : 0xff2a1a).multiplyScalar(2.2)));
+      this.lanterns.forEach((_, i) => {
+        const hex = dc.lanternPalette[i % dc.lanternPalette.length];
+        m.setColorAt(i, c.set(hex).multiplyScalar(nation === "lanterns" ? 2.6 : 2.2));
+      });
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
       m.frustumCulled = false;
       this.lanternMesh = keep(m);
       this.group.add(m);
@@ -191,7 +271,6 @@ export class Dressing {
       }
     }
     if (!p || !q) return null;
-    // Nothing standing in between.
     for (let t = 0.15; t < 0.9; t += 0.15) {
       const v = p.clone().lerp(q, t);
       if (!ground.free(v.x, v.z, 0, true)) return null;
@@ -199,52 +278,61 @@ export class Dressing {
     return [p, q];
   }
 
-  private billboard(b: Building, cx: number, cy: number, atlas: THREE.Texture, rnd: () => number, city: CityScene, ground: Ground, keep: <T extends { dispose: () => void }>(x: T) => T) {
+  private billboard(
+    b: Building,
+    cx: number,
+    cy: number,
+    atlas: THREE.Texture,
+    rnd: () => number,
+    city: CityScene,
+    ground: Ground,
+    keep: <T extends { dispose: () => void }>(x: T) => T,
+    palette: number[],
+    damaged: boolean,
+  ) {
     const bx = b.x + b.w / 2;
     const by = b.y + b.h / 2;
-    // The face that looks towards the middle of the district.
     const dx = cx - bx;
     const dy = cy - by;
     const xSide = Math.abs(dx) / b.w > Math.abs(dy) / b.h;
     const nx = xSide ? Math.sign(dx) || 1 : 0;
     const ny = xSide ? 0 : Math.sign(dy) || 1;
     const faceW = xSide ? b.h : b.w;
-    const w = Math.min(faceW * 0.6, 8);
-    if (w < 3.5) return;
+    const w = Math.min(faceW * 0.65, 8.5);
+    if (w < 3.4) return;
     const hgt = w * 1.56;
     const cyH = Math.min(b.height - hgt / 2 - 1, 9 + hgt / 2 + rnd() * 6);
-    if (cyH - hgt / 2 < 5) return;
-    const px = bx + nx * (b.w / 2 + 0.2);
-    const pz = by + ny * (b.h / 2 + 0.2);
+    if (cyH - hgt / 2 < 4.5) return;
+    const px = bx + nx * (b.w / 2 + 0.22);
+    const pz = by + ny * (b.h / 2 + 0.22);
     if (!ground.free(px + nx * 4, pz + ny * 4, 0.5)) return;
     const tex = keep(atlas.clone());
     tex.repeat.set(1, 1 / ADS);
     tex.needsUpdate = true;
-    const tint = NEON[Math.floor(rnd() * NEON.length)];
-    const mat = keep(new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(tint).multiplyScalar(1.7), transparent: true, opacity: 0.95, toneMapped: false }));
+    const tint = palette[Math.floor(rnd() * palette.length)];
+    const mat = keep(new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(tint).multiplyScalar(1.85), transparent: true, opacity: 0.95, toneMapped: false }));
     const plane = new THREE.Mesh(keep(new THREE.PlaneGeometry(w, hgt)), mat);
     plane.position.set(px, cyH, pz);
     plane.rotation.y = Math.atan2(nx, ny);
     this.group.add(plane);
-    // A dark frame behind the screen.
     const frame = new THREE.Mesh(keep(new THREE.BoxGeometry(w + 0.4, hgt + 0.4, 0.25)), keep(new THREE.MeshStandardMaterial({ color: 0x141416, metalness: 0.7, roughness: 0.5 })));
     frame.position.set(px - nx * 0.14, cyH, pz - ny * 0.14);
     frame.rotation.y = plane.rotation.y;
     this.group.add(frame);
-    this.boards.push({ mat, tex, seed: Math.floor(rnd() * 1000) });
-    city.lights.push({ pos: new THREE.Vector3(px + nx * 3, Math.min(cyH, 8), pz + ny * 3), color: tint, intensity: 26, distance: 22, flicker: 0, seed: b.seed });
+    this.boards.push({ mat, tex, seed: Math.floor(rnd() * 1000), damaged });
+    city.lights.push({ pos: new THREE.Vector3(px + nx * 3, Math.min(cyH, 8), pz + ny * 3), color: tint, intensity: 28, distance: 22, flicker: damaged ? 2 : 0, seed: b.seed });
   }
 
   update(time: number) {
     for (const b of this.boards) {
-      // Each board cycles its adverts with a glitch between them.
       const slot = time / 5 + b.seed * 0.37;
       const frame = Math.floor(slot) % ADS;
       b.tex.offset.y = 1 - (frame + 1) / ADS;
       const edge = slot % 1;
-      const glitch = edge < 0.04 || (Math.sin(time * 37 + b.seed) > 0.995);
-      b.mat.opacity = glitch ? 0.3 + Math.random() * 0.4 : 0.92 + Math.sin(time * 4 + b.seed) * 0.04;
-      b.tex.offset.x = glitch ? (Math.random() - 0.5) * 0.05 : 0;
+      const glitchThresh = b.damaged ? 0.93 : 0.995;
+      const glitch = edge < 0.04 || Math.sin(time * 37 + b.seed) > glitchThresh;
+      b.mat.opacity = glitch ? (b.damaged ? 0.12 : 0.3) + Math.random() * 0.4 : 0.92 + Math.sin(time * 4 + b.seed) * 0.04;
+      b.tex.offset.x = glitch ? (Math.random() - 0.5) * 0.06 : 0;
     }
     const m = this.lanternMesh;
     if (m) {

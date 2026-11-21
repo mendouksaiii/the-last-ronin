@@ -22,7 +22,7 @@ export function EndingScreen({ save, onExplore, onTitle }: Props) {
           <p className="max-w-md text-sm font-bold leading-relaxed">
             Five generals have fallen. The bo, the chain and the nunchaku lie beside the katana on the Lantern Lord's grave, and the last ronin walks out into the rain, free.
           </p>
-          <p className="text-xs font-bold uppercase tracking-wider text-ink/70">
+          <p className="text-xs font-bold uppercase tabular-nums tracking-wider text-ink/70">
             Level {save.level} · {save.done.length} of 50 missions complete
           </p>
           <div className="mt-2 flex flex-wrap justify-center gap-3">

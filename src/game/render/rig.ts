@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { detailMaps, shellTextures } from "./textures";
 import type { Cape } from "./cloak";
-import { CLOAK, RAG, addHood, beanie, makeCape, oniHead, survivorKit, tacticalKit } from "./outfit";
+import { CLOAK, RAG, addHood, beanie, makeCape, oniHead, roninKit, survivorKit, tacticalKit } from "./outfit";
 import { humanHead, person } from "./human";
 
 // Character models built from smooth, anatomically proportioned volumes with physically based
@@ -46,7 +46,9 @@ export interface Look {
   cloak?: number;
   /** A tattered cloth hanging from one shoulder. */
   cape?: number;
-  outfit?: "tactical" | "survivor";
+  outfit?: "tactical" | "survivor" | "ronin";
+  /** Inner shirt colour when wearing a layered jacket. */
+  shirt?: number;
   /** Trousers, when they differ from the coat. */
   pants?: number;
   /** Seed for small per-character variations. */
@@ -82,6 +84,10 @@ export interface Rig {
   tails: THREE.Group | null;
   /** Chest volume, scaled slightly with breathing. */
   chest: THREE.Object3D | null;
+  /** Articulated shoulder sockets that lift slightly with overhead swings. */
+  shoulders?: { L: THREE.Group; R: THREE.Group };
+  /** Articulated coat hem panels so walking legs never clip through long coats. */
+  coat?: { L: THREE.Group; R: THREE.Group; back: THREE.Group };
   /** Cloth simulated each frame. */
   capes: Cape[];
   /** Leg-cycle smoothing state. */
@@ -239,6 +245,28 @@ const taper = (r1: number, r2: number, l: number) =>
       pts.push(new THREE.Vector2(Math.sin(a) * r1, l / 2 + Math.cos(a) * r1 * 0.8));
     }
     return new THREE.LatheGeometry(pts, 18);
+  });
+
+/** Continuous sculpted human torso lathe tailored by build ("woman" | "man" | "broad"). */
+const humanTorsoGeo = (build: "man" | "woman" | "broad") =>
+  geo(`torso2:${build}`, () => {
+    const hipW = build === "woman" ? 0.175 : build === "broad" ? 0.182 : 0.168;
+    const waistW = build === "woman" ? 0.126 : build === "broad" ? 0.162 : 0.145;
+    const chestW = build === "woman" ? 0.172 : build === "broad" ? 0.222 : 0.196;
+    const neckW = build === "woman" ? 0.056 : 0.066;
+    const pts = [
+      new THREE.Vector2(0.001, -0.055),
+      new THREE.Vector2(hipW * 0.82, -0.045),
+      new THREE.Vector2(hipW, 0.01),
+      new THREE.Vector2(waistW, 0.14),
+      new THREE.Vector2((waistW + chestW) * 0.5, 0.27),
+      new THREE.Vector2(chestW, 0.43),
+      new THREE.Vector2(chestW * 0.92, 0.52),
+      new THREE.Vector2(neckW * 1.45, 0.585),
+      new THREE.Vector2(neckW, 0.62),
+      new THREE.Vector2(0.001, 0.625),
+    ];
+    return new THREE.LatheGeometry(pts, 28);
   });
 
 function limb(parent: THREE.Object3D, x: number, y: number, r1: number, l1: number, r2: number, l2: number, m: THREE.Material, m2 = m): Limb {
@@ -483,40 +511,78 @@ function buildHead(head: THREE.Group, look: Look, skin: THREE.Material, cloth: T
   let tails: THREE.Group | null = null;
   switch (look.head) {
     case "turtle": {
-      // A broad reptile skull with a blunt beak and heavy brow.
-      const skull = part(sphere(0.13), skin);
-      skull.scale.set(1.05, 0.98, 1.15);
-      skull.position.set(0, 0.01, 0.0);
-      const snout = part(sphere(0.1), skin);
-      snout.scale.set(1.0, 0.72, 1.0);
-      snout.position.set(0, -0.045, 0.075);
-      const brow = part(rbox(0.21, 0.035, 0.06, 0.016), skin);
-      brow.position.set(0, 0.035, 0.1);
-      head.add(skull, snout, brow);
-      // The mask: a cloth band wrapping the eyes.
-      const band = part(cyl(0.142, 0.14, 0.055, 32, true), accent);
-      (band.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
-      band.scale.set(1.05, 1, 1.18);
-      band.position.set(0, 0.022, 0.012);
-      head.add(band);
-      realEyes(0.148, 0.022, 0.048, 0.02);
+      // Landing-page Ronin turtle head: wide weathered olive snout & strong jaw under a full crimson cowl wrap.
+      const skull = part(sphere(0.122), skin);
+      skull.scale.set(1.02, 0.9, 1.06);
+      skull.position.set(0, 0.008, 0.004);
+      const snout = part(sphere(0.098), skin);
+      snout.scale.set(1.04, 0.6, 1.1);
+      snout.position.set(0, -0.042, 0.072);
+      const chin = part(rbox(0.132, 0.046, 0.095, 0.02), skin);
+      chin.position.set(0, -0.074, 0.068);
+      const beakLine = part(rbox(0.098, 0.006, 0.024, 0.002), M.wrap);
+      beakLine.position.set(0, -0.054, 0.156);
+      head.add(skull, snout, chin, beakLine);
+
+      for (const s of [-1, 1]) {
+        const cheek = part(sphere(0.056), skin);
+        cheek.scale.set(1.04, 0.72, 0.96);
+        cheek.position.set(s * 0.076, -0.026, 0.066);
+        head.add(cheek);
+      }
+
+      // Full deep-crimson cloth head-wrap / cowl covering crown, forehead, temples & nape.
+      accent.side = THREE.DoubleSide;
+      const cowlCap = part(sphere(0.134), accent);
+      cowlCap.scale.set(1.06, 0.98, 1.15);
+      cowlCap.position.set(0, 0.024, -0.008);
+      const band = part(cyl(0.142, 0.139, 0.054, 32, true), accent);
+      band.scale.set(1.05, 1, 1.17);
+      band.position.set(0, 0.024, 0.008);
+      const foldCrease = part(geo("cowlFold", () => new THREE.TorusGeometry(0.136, 0.012, 8, 28)), accent);
+      foldCrease.scale.set(1.06, 1.16, 1);
+      foldCrease.rotation.set(Math.PI / 2 + 0.18, 0, 0.08);
+      foldCrease.position.set(0, 0.052, -0.006);
+      head.add(cowlCap, band, foldCrease);
+
+      // Fierce V-furrowed crimson brow folds, dark recessed eye cutouts & sharp white slit eyes.
+      for (const s of [-1, 1]) {
+        const brow = part(rbox(0.088, 0.025, 0.052, 0.01), accent);
+        brow.position.set(s * 0.044, 0.043, 0.118);
+        brow.rotation.set(0.06, -s * 0.16, -s * 0.2);
+        const lowerWrap = part(rbox(0.052, 0.014, 0.024, 0.004), accent);
+        lowerWrap.position.set(s * 0.047, 0.005, 0.14);
+        lowerWrap.rotation.z = -s * 0.12;
+        const sock = part(rbox(0.048, 0.022, 0.016, 0.006), M.wrap);
+        sock.position.set(s * 0.046, 0.019, 0.138);
+        sock.rotation.z = -s * 0.18;
+        const slit = new THREE.Mesh(rbox(0.036, 0.0105, 0.014, 0.004), eyes);
+        slit.position.set(s * 0.046, 0.019, 0.145);
+        slit.rotation.z = -s * 0.18;
+        head.add(brow, lowerWrap, sock, slit);
+      }
+
+      // Back knot & asymmetric tattered crimson bandana tails whipping behind (clear of hood when cloaked).
+      tails = new THREE.Group();
+      tails.position.set(0, look.cloak ? -0.015 : 0.016, look.cloak ? -0.184 : -0.156);
+      const knot = part(sphere(0.032), accent);
+      knot.scale.set(1.45, 1, 0.9);
+      tails.add(knot);
+      for (const [s, len, pitch] of [[-1, 0.48, -0.05], [1, 0.37, 0.08]] as const) {
+        const seg1 = part(rbox(0.04, 0.008, len * 0.65, 0.003), accent);
+        seg1.position.set(s * 0.034, pitch * 0.3, -len * 0.32);
+        seg1.rotation.set(pitch, s * 0.22, s * 0.1);
+        const seg2 = part(rbox(0.024, 0.007, len * 0.42, 0.002), accent);
+        seg2.position.set(s * 0.068, pitch * 0.7 - 0.015, -len * 0.8);
+        seg2.rotation.set(pitch * 1.4 - 0.12, s * 0.34, s * 0.16);
+        tails.add(seg1, seg2);
+      }
+      head.add(tails);
+
       if (look.cloak) {
         const hoodMat = clothMat(look.cloak);
-        addHood(head, hoodMat, 0.185, 1.0);
-        break;
+        addHood(head, hoodMat, 0.185, 0.98);
       }
-      tails = new THREE.Group();
-      tails.position.set(0, 0.03, -0.15);
-      for (const s of [-1, 1]) {
-        const t = part(rbox(0.04, 0.008, 0.36, 0.003), accent);
-        t.position.set(s * 0.03, 0, -0.17);
-        t.rotation.y = s * 0.18;
-        tails.add(t);
-      }
-      const knot = part(sphere(0.03), accent);
-      knot.scale.set(1.4, 1, 0.8);
-      tails.add(knot);
-      head.add(tails);
       break;
     }
     case "hood":
@@ -671,6 +737,9 @@ function buildBody(look: Look): Rig {
   root.scale.setScalar(look.scale);
   const b = look.bulk;
   const turtle = look.head === "turtle";
+  const human = look.head === "human";
+  const seed = look.seed ?? 1;
+  const who = human ? person(seed, look.accent) : null;
   const skin = skinMat(look.skin, turtle);
   const cloth = clothMat(look.cloth);
   const accent = clothMat(look.accent);
@@ -678,126 +747,246 @@ function buildBody(look: Look): Rig {
   const limbMat = turtle ? skin : cloth;
   const pants = look.pants !== undefined ? clothMat(look.pants) : null;
   const legMat = pants ?? limbMat;
-  const human = look.head === "human";
   const hipH = 0.95;
 
   const torso = new THREE.Group();
   body.add(torso);
-  // Pelvis, abdomen and a broad chest that narrows to the waist.
-  const pelvis = part(sphere(0.16), turtle ? M.wrap : (pants ?? cloth));
-  pelvis.scale.set(1.12 * b, 0.7, 0.85 * b);
-  pelvis.position.y = 0.02;
-  torso.add(pelvis);
-  const abdomen = part(capsule(0.14, 0.12), turtle ? skin : cloth);
-  abdomen.scale.set(b, 1, 0.82 * b);
-  abdomen.position.y = 0.17;
-  torso.add(abdomen);
-  const chest = part(sphere(0.2), turtle ? skin : cloth);
-  chest.scale.set(1.12 * b, 1.08, 0.72 * b);
-  chest.position.y = 0.4;
-  torso.add(chest);
-  // Trapezius slope from neck to shoulders.
-  const traps = part(sphere(0.13), turtle ? skin : cloth);
-  traps.scale.set(1.5 * b, 0.55, 0.7 * b);
-  traps.position.set(0, 0.54, -0.02);
-  torso.add(traps);
-  const belt = part(cyl(0.175 * b, 0.18 * b, 0.07, 32), turtle ? M.boot : leatherMat(0x2a2220));
-  belt.scale.z = 0.85;
-  belt.position.y = 0.08;
-  const buckle = part(rbox(0.06, 0.045, 0.02, 0.006), M.steelWrap);
-  buckle.position.set(0, 0.08, 0.155 * b);
-  torso.add(belt, buckle);
-  if (!turtle) {
-    // A jacket: collar and a hem flare over the hips.
-    const collar = part(cyl(0.085, 0.1, 0.07, 24, true), cloth);
+
+  let chest: THREE.Object3D | null = null;
+  if (human && who) {
+    // Continuous sculpted human torso with natural hip-to-waist-to-shoulder profile.
+    const torsoMesh = part(humanTorsoGeo(who.build), cloth);
+    torsoMesh.scale.set(b, 1, b * 0.72);
+    torso.add(torsoMesh);
+
+    const pelvis = part(sphere(0.148), pants ?? cloth);
+    pelvis.scale.set(1.06 * b, 0.56, 0.78 * b);
+    pelvis.position.y = 0.015;
+    torso.add(pelvis);
+
+    const sternum = part(sphere(0.145), cloth);
+    sternum.scale.set((who.build === "woman" ? 1.02 : 1.12) * b, 0.92, 0.52 * b);
+    sternum.position.set(0, 0.4, 0.036 * b);
+    torso.add(sternum);
+    chest = sternum;
+
+    // Jacket collar & lapels so every human reads as clothed rather than sculpted clay.
+    const collar = part(cyl(0.072, 0.095, 0.055, 24, true), cloth);
     (collar.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
-    collar.position.y = 0.6;
+    collar.position.y = 0.605;
     torso.add(collar);
+    for (const s of [-1, 1]) {
+      const lapel = part(rbox(0.036, 0.2, 0.018, 0.006), cloth);
+      lapel.position.set(s * 0.056 * b, 0.46, 0.122 * b);
+      lapel.rotation.set(-0.08, s * 0.18, s * 0.22);
+      torso.add(lapel);
+    }
+  } else {
+    // Pelvis, abdomen and a broad chest that narrows to the waist.
+    const pelvis = part(sphere(0.16), turtle ? M.wrap : (pants ?? cloth));
+    pelvis.scale.set(1.12 * b, 0.7, 0.85 * b);
+    pelvis.position.y = 0.02;
+    torso.add(pelvis);
+    const abdomen = part(capsule(0.14, 0.12), turtle ? skin : cloth);
+    abdomen.scale.set(b, 1, 0.82 * b);
+    abdomen.position.y = 0.17;
+    torso.add(abdomen);
+    const chestSphere = part(sphere(0.2), turtle ? skin : cloth);
+    chestSphere.scale.set(1.12 * b, 1.08, 0.72 * b);
+    chestSphere.position.y = 0.4;
+    torso.add(chestSphere);
+    chest = chestSphere;
+    // Trapezius slope from neck to shoulders.
+    const traps = part(sphere(0.13), turtle ? skin : cloth);
+    traps.scale.set(1.5 * b, 0.55, 0.7 * b);
+    traps.position.set(0, 0.54, -0.02);
+    torso.add(traps);
+    if (!turtle) {
+      const collar = part(cyl(0.085, 0.1, 0.07, 24, true), cloth);
+      (collar.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+      collar.position.y = 0.6;
+      torso.add(collar);
+    }
   }
+
+  if (look.outfit !== "ronin") {
+    const belt = part(cyl((human ? 0.155 : 0.175) * b, (human ? 0.165 : 0.18) * b, 0.06, 28), turtle ? M.boot : leatherMat(0x2a2220));
+    belt.scale.z = human ? 0.78 : 0.85;
+    belt.position.y = 0.08;
+    const buckle = part(rbox(0.052, 0.04, 0.018, 0.006), M.steelWrap);
+    buckle.position.set(0, 0.08, (human ? 0.125 : 0.155) * b);
+    torso.add(belt, buckle);
+  }
+
   if (look.shell) {
     const st = shellTextures();
-    const carapace = new THREE.MeshPhysicalMaterial({ color: look.shell, map: st.map, normalMap: st.normal, roughness: 0.55, clearcoat: 0.4, clearcoatRoughness: 0.4 });
-    const shell = part(sphere(0.3), carapace);
-    shell.scale.set(1.12 * b, 1.3, 0.62);
+    const carapace = new THREE.MeshPhysicalMaterial({ color: look.shell, map: st.map, normalMap: st.normal, roughness: 0.65, clearcoat: 0.14, clearcoatRoughness: 0.55 });
+    const shell = part(sphere(0.305), carapace);
+    shell.scale.set(1.12 * b, 1.32, 0.64);
     shell.position.set(0, 0.34, -0.14);
+    // Layered vertebral ridge scutes & costal ridges along the back carapace.
+    for (let i = 0; i < 4; i++) {
+      const y = 0.17 + i * 0.135;
+      const arch = Math.sin(((i + 0.5) / 4) * Math.PI);
+      const ridge = part(rbox(0.115 * b, 0.115, 0.095, 0.032), carapace);
+      ridge.position.set(0, y, -0.255 - arch * 0.07);
+      ridge.rotation.x = (i - 1.5) * -0.18;
+      torso.add(ridge);
+      for (const s of [-1, 1]) {
+        const costal = part(rbox(0.11 * b, 0.105, 0.065, 0.024), carapace);
+        costal.position.set(s * (0.135 + arch * 0.035) * b, y, -0.215 - arch * 0.05);
+        costal.rotation.set((i - 1.5) * -0.15, s * 0.42, 0);
+        torso.add(costal);
+      }
+    }
     // Rim where shell meets plastron.
-    const rim = part(geo("rim", () => new THREE.TorusGeometry(0.3, 0.025, 12, 40)), carapace);
-    rim.scale.set(1.12 * b, 1.3, 1);
-    rim.position.set(0, 0.34, -0.06);
-    const plastronMat = new THREE.MeshPhysicalMaterial({ color: 0x9a8458, roughness: 0.6, normalMap: st.normal, normalScale: new THREE.Vector2(0.4, 0.4), clearcoat: 0.2 });
-    const plastron = part(sphere(0.26), plastronMat);
-    plastron.scale.set(0.9 * b, 1.18, 0.42);
-    plastron.position.set(0, 0.3, 0.07);
+    const rim = part(geo("rim", () => new THREE.TorusGeometry(0.305, 0.028, 12, 40)), carapace);
+    rim.scale.set(1.12 * b, 1.32, 1);
+    rim.position.set(0, 0.34, -0.055);
+    const plastronMat = new THREE.MeshPhysicalMaterial({ color: 0xa49474, roughness: 0.66, normalMap: st.normal, normalScale: new THREE.Vector2(0.55, 0.55), clearcoat: 0.1 });
+    const plastron = part(sphere(0.255), plastronMat);
+    plastron.scale.set(0.92 * b, 1.18, 0.42);
+    plastron.position.set(0, 0.3, 0.072);
     torso.add(shell, rim, plastron);
-    // A leather harness strap across the chest.
-    const strap = part(rbox(0.05, 0.62, 0.02, 0.008), M.boot);
-    strap.position.set(0, 0.32, 0.18);
-    strap.rotation.z = 0.6;
-    torso.add(strap);
+    // Upper pectoral plates + lower segmented abdominal scutes + center seam.
+    for (const s of [-1, 1]) {
+      const pec = part(rbox(0.125 * b, 0.12, 0.044, 0.018), plastronMat);
+      pec.position.set(s * 0.075 * b, 0.425, 0.148);
+      pec.rotation.y = s * 0.16;
+      torso.add(pec);
+    }
+    for (let i = 0; i < 3; i++) {
+      const plate = part(rbox((0.22 - i * 0.008) * b, 0.078, 0.04, 0.015), plastronMat);
+      plate.position.set(0, 0.175 + i * 0.088, 0.158);
+      torso.add(plate);
+    }
+    const seam = part(rbox(0.01, 0.38, 0.015, 0.003), M.wrap);
+    seam.position.set(0, 0.32, 0.169);
+    torso.add(seam);
+    if (look.outfit !== "ronin") {
+      const strap = part(rbox(0.05, 0.62, 0.02, 0.008), M.boot);
+      strap.position.set(0, 0.32, 0.18);
+      strap.rotation.z = 0.6;
+      torso.add(strap);
+    }
   }
+
   const faceSkin = turtle ? skin : skinMat(look.skin, false);
-  const neck = part(human ? cyl(0.047, 0.06, 0.15, 18) : cyl(0.06, 0.075, 0.14, 18), faceSkin);
-  neck.position.y = 0.64;
+  const neck = part(human ? cyl(0.044, 0.056, 0.15, 18) : cyl(0.06, 0.075, 0.14, 18), faceSkin);
+  neck.position.y = human ? 0.635 : 0.64;
   torso.add(neck);
   const head = new THREE.Group();
-  head.position.y = 0.79;
+  head.position.y = human ? 0.77 : 0.79;
   torso.add(head);
   const tails = buildHead(head, look, faceSkin, cloth, accent, eyes);
 
-  // Shoulders, arms and hands.
-  const armR = limb(torso, -0.25 * b, 0.53, 0.066 * b, 0.3, 0.056 * b, 0.27, limbMat, turtle ? skin : cloth);
-  const armL = limb(torso, 0.25 * b, 0.53, 0.066 * b, 0.3, 0.056 * b, 0.27, limbMat, turtle ? skin : cloth);
+  // Articulated shoulders, arms and sculpted hands.
+  const shoulderX = human ? (who?.build === "woman" ? 0.195 : who?.build === "broad" ? 0.235 : 0.215) * b : 0.25 * b;
+  const shoulderR = new THREE.Group();
+  shoulderR.position.set(-shoulderX, 0.525, 0);
+  const shoulderL = new THREE.Group();
+  shoulderL.position.set(shoulderX, 0.525, 0);
+  torso.add(shoulderR, shoulderL);
+
+  const armR = limb(shoulderR, 0, 0, (human ? 0.058 : 0.066) * b, 0.3, (human ? 0.048 : 0.056) * b, 0.27, limbMat, turtle ? skin : cloth);
+  const armL = limb(shoulderL, 0, 0, (human ? 0.058 : 0.066) * b, 0.3, (human ? 0.048 : 0.056) * b, 0.27, limbMat, turtle ? skin : cloth);
   const handMat = turtle ? skin : human && look.outfit === "survivor" ? faceSkin : leatherMat(0x1e1a18);
   for (const [a, s] of [[armR, -1], [armL, 1]] as const) {
-    const delt = part(sphere(0.085 * b), turtle ? skin : cloth);
-    delt.scale.set(1, 0.9, 1);
+    const delt = part(sphere((human ? 0.07 : 0.085) * b), turtle ? skin : cloth);
+    delt.scale.set(0.95, 0.9, 0.95);
     delt.position.set(0, -0.01, 0);
     a.upper.add(delt);
-    const palm = part(rbox(0.07 * b, 0.09, 0.04, 0.015), handMat);
-    palm.position.y = -0.045;
-    const fingers = part(rbox(0.065 * b, 0.05, 0.045, 0.018), handMat);
-    fingers.position.set(0, -0.095, 0.012);
-    fingers.rotation.x = 0.5;
-    const thumb = part(capsule(0.014, 0.035), handMat);
-    thumb.position.set(-s * 0.035 * b, -0.05, 0.02);
-    thumb.rotation.z = s * 0.6;
+    const palm = part(rbox((human ? 0.054 : 0.068) * b, 0.084, 0.032, 0.013), handMat);
+    palm.position.y = -0.042;
+    const fingers = part(rbox((human ? 0.05 : 0.064) * b, 0.048, 0.036, 0.015), handMat);
+    fingers.position.set(0, -0.09, 0.01);
+    fingers.rotation.x = 0.45;
+    const thumb = part(capsule(0.012, 0.032), handMat);
+    thumb.position.set(-s * 0.03 * b, -0.048, 0.018);
+    thumb.rotation.z = s * 0.58;
     a.end.add(palm, fingers, thumb);
     if (!turtle) {
-      // Wrist cuff.
-      const cuff = part(cyl(0.05 * b, 0.05 * b, 0.05, 18), cloth);
+      const cuff = part(cyl(0.046 * b, 0.044 * b, 0.045, 18), cloth);
       cuff.position.y = 0.02;
       a.end.add(cuff);
-    } else {
-      // Hand wraps on the forearm.
+    } else if (look.outfit !== "ronin") {
       const wrap = part(cyl(0.046 * b, 0.044 * b, 0.1, 18), M.wrap);
       wrap.position.y = 0.06;
       a.end.add(wrap);
     }
   }
-  // Legs: thighs, knees, shins and boots.
-  const legR = limb(body, -0.11 * b, 0, 0.088 * b, 0.46, 0.066 * b, 0.45, legMat, turtle ? skin : legMat);
-  const legL = limb(body, 0.11 * b, 0, 0.088 * b, 0.46, 0.066 * b, 0.45, legMat, turtle ? skin : legMat);
+
+  // Legs: thighs, knees, shins and boots/shoes.
+  const hipX = human ? (who?.build === "woman" ? 0.098 : 0.105) * b : 0.11 * b;
+  const legR = limb(body, -hipX, 0, (human ? 0.08 : 0.088) * b, 0.46, (human ? 0.058 : 0.066) * b, 0.45, legMat, turtle ? skin : legMat);
+  const legL = limb(body, hipX, 0, (human ? 0.08 : 0.088) * b, 0.46, (human ? 0.058 : 0.066) * b, 0.45, legMat, turtle ? skin : legMat);
   for (const l of [legR, legL]) {
-    const foot = part(rbox(0.1 * b, 0.075, 0.26, 0.03), turtle ? skin : M.boot);
-    foot.position.set(0, -0.03, 0.06);
-    l.end.add(foot);
     if (turtle) {
-      // Knee pad.
+      // Bare heavy two-toed turtle foot emerging from the ankle wraps.
+      const footPad = part(rbox(0.095 * b, 0.052, 0.15, 0.022), skin);
+      footPad.position.set(0, -0.032, 0.015);
+      l.end.add(footPad);
+      for (const ts of [-1, 1]) {
+        const toe = part(capsule(0.023 * b, 0.072), skin);
+        toe.rotation.set(Math.PI / 2, ts * 0.14, 0);
+        toe.position.set(ts * 0.029 * b, -0.038, 0.104);
+        const claw = part(capsule(0.01 * b, 0.018), M.wrap);
+        claw.rotation.set(Math.PI / 2, ts * 0.14, 0);
+        claw.position.set(ts * 0.034 * b, -0.042, 0.154);
+        l.end.add(toe, claw);
+      }
+    } else if (look.outfit !== "ronin") {
+      const foot = part(rbox((human ? 0.092 : 0.1) * b, 0.065, 0.25, 0.026), M.boot);
+      foot.position.set(0, -0.032, 0.055);
+      const sole = part(rbox(0.098 * b, 0.018, 0.26, 0.006), M.wrap);
+      sole.position.set(0, -0.062, 0.055);
+      const shaft = part(cyl(0.06 * b, 0.055 * b, 0.17, 18), M.boot);
+      shaft.position.y = 0.06;
+      l.end.add(foot, sole, shaft);
+    }
+    if (turtle && look.outfit !== "ronin") {
       const pad = part(sphere(0.07 * b), M.boot);
       pad.scale.set(1, 0.9, 0.7);
       pad.position.set(0, -0.02, 0.04);
       l.lower.add(pad);
-    } else {
-      const shaft = part(cyl(0.066 * b, 0.06 * b, 0.18, 18), M.boot);
-      shaft.position.y = 0.06;
-      l.end.add(shaft);
     }
   }
-  if (look.skirt) {
-    const skirt = part(cyl(0.2 * b, 0.32 * b, look.skirt, 32, true), cloth);
-    (skirt.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
-    skirt.position.y = 0.06 - look.skirt / 2;
-    torso.add(skirt);
+
+  // Articulated coat hem panels that track hip stride so walking legs never clip through coats.
+  let coat: Rig["coat"] = undefined;
+  if (look.skirt && look.skirt > 0) {
+    const sl = look.skirt;
+    const upperWaist = part(cyl(0.17 * b, 0.19 * b, 0.14, 24, true), cloth);
+    (upperWaist.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+    upperWaist.scale.z = 0.82;
+    upperWaist.position.y = 0.04;
+    torso.add(upperWaist);
+
+    const panelGeo = geo(`coatSide:${b.toFixed(2)}:${sl.toFixed(2)}`, () => new THREE.CylinderGeometry(0.17 * b, 0.24 * b, sl, 14, 1, true, -Math.PI * 0.42, Math.PI * 0.84));
+    const backGeo = geo(`coatBack:${b.toFixed(2)}:${sl.toFixed(2)}`, () => new THREE.CylinderGeometry(0.18 * b, 0.26 * b, sl, 16, 1, true, Math.PI * 0.65, Math.PI * 0.7));
+
+    const L = new THREE.Group();
+    L.position.set(0.02 * b, 0.06, 0);
+    const flapL = part(panelGeo, cloth);
+    flapL.rotation.y = Math.PI * 0.42;
+    flapL.position.y = -sl / 2;
+    L.add(flapL);
+
+    const R = new THREE.Group();
+    R.position.set(-0.02 * b, 0.06, 0);
+    const flapR = part(panelGeo, cloth);
+    flapR.rotation.y = -Math.PI * 0.42;
+    flapR.position.y = -sl / 2;
+    R.add(flapR);
+
+    const back = new THREE.Group();
+    back.position.set(0, 0.06, -0.01);
+    const flapB = part(backGeo, cloth);
+    flapB.position.y = -sl / 2;
+    back.add(flapB);
+
+    torso.add(L, R, back);
+    coat = { L, R, back };
   }
 
   const weapon = buildGear(look.gear);
@@ -806,12 +995,12 @@ function buildBody(look: Look): Rig {
   if (off) armL.end.add(off.group);
   let sheath: Rig["sheath"] = null;
   if (look.gear === "katana" && look.shell && weapon) {
-    // Slung across the back over the cloak: the hilt rises behind the right shoulder so the
-    // right hand can draw it, the tip rests at the left hip.
+    // Slung across the carapace: the hilt rises behind the right shoulder so the
+    // right hand can draw it, the tip rests near the left hip.
     const back = new THREE.Group();
-    const dir = new THREE.Vector3(0.45, -0.85, -0.27).normalize();
+    const dir = new THREE.Vector3(0.45, -0.85, -0.25).normalize();
     back.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-    back.position.set(-0.15, 0.6, look.cloak ? -0.37 : -0.33).addScaledVector(dir, -0.15);
+    back.position.set(-0.15 * b, 0.62, -0.34).addScaledVector(dir, -0.15);
     const lacquer = new THREE.MeshPhysicalMaterial({ color: 0x120a0a, roughness: 0.25, clearcoat: 1 });
     const scabbard = part(rbox(0.036, 0.055, 0.84, 0.014), lacquer);
     scabbard.position.z = 0.15 + 0.42;
@@ -828,11 +1017,11 @@ function buildBody(look: Look): Rig {
   }
 
   // Clothing, kit and simulated cloth.
-  const seed = look.seed ?? 1;
   const extra: THREE.MeshStandardMaterial[] = [];
   const parts = { torso, armR, armL, legR, legL, b };
-  if (look.outfit === "tactical") extra.push(...tacticalKit(parts, look.accent, look.gear !== "katana" && look.gear !== "crossbow", seed));
-  else if (look.outfit === "survivor") extra.push(...survivorKit(parts, look.accent, seed));
+  if (look.outfit === "ronin") extra.push(...roninKit(parts, look.accent, look.gear, look.cloak));
+  else if (look.outfit === "tactical") extra.push(...tacticalKit(parts, look.accent, look.gear !== "katana" && look.gear !== "crossbow", seed));
+  else if (look.outfit === "survivor") extra.push(...survivorKit(parts, look.accent, seed, look.shirt));
   const capes: Cape[] = [];
   if (look.cloak !== undefined) {
     const c = makeCape(CLOAK(b, seed), look.cloak);
@@ -865,6 +1054,8 @@ function buildBody(look: Look): Rig {
     sheath,
     tails,
     chest,
+    shoulders: { L: shoulderL, R: shoulderR },
+    coat,
     cur: restPose(),
     yaw: null,
     capes,
@@ -940,30 +1131,53 @@ export function mixPose(a: Pose, b: Partial<Pose>, k: number): Pose {
   return out;
 }
 
-/** Eases the rig towards a target pose and applies it to the bones. */
+/** Eases the rig towards a target pose with hierarchical damping and applies it to the bones. */
 export function applyPose(rig: Rig, target: Pose, dt: number, rate = 20) {
-  const k = 1 - Math.exp(-dt * rate);
-  const p = mixPose(rig.cur, target, k);
-  // A running stride follows the leg cycle exactly; a sudden jump (a stance change between cuts,
-  // stopping to fight) is absorbed into an offset that bleeds away, so the feet step across.
+  const kLimb = 1 - Math.exp(-dt * rate);
+  const kCore = 1 - Math.exp(-dt * Math.min(rate, 14));
+  const p = rig.cur;
+
+  p.armR[0] = lerp(p.armR[0], target.armR[0], kLimb);
+  p.armR[1] = lerp(p.armR[1], target.armR[1], kLimb);
+  p.armR[2] = lerp(p.armR[2], target.armR[2], kLimb);
+  p.armL[0] = lerp(p.armL[0], target.armL[0], kLimb);
+  p.armL[1] = lerp(p.armL[1], target.armL[1], kLimb);
+  p.armL[2] = lerp(p.armL[2], target.armL[2], kLimb);
+  p.wrist = lerp(p.wrist, target.wrist, kLimb);
+  p.legs = lerp(p.legs, target.legs, kLimb);
+  p.drop = lerp(p.drop, target.drop, kLimb);
+  p.head = lerp(p.head, target.head, kLimb);
+  p.gearA = lerp(p.gearA, target.gearA, kLimb);
+  p.look = lerp(p.look, target.look, kLimb);
+  p.breath = lerp(p.breath, target.breath, kLimb);
+
+  // Weighty torso posture settles slightly slower than agile arm strikes for fluid follow-through.
+  p.lean = lerp(p.lean, target.lean, kCore);
+  p.twist = lerp(p.twist, target.twist, kCore);
+  p.sway = lerp(p.sway, target.sway, kCore);
+  p.bank = lerp(p.bank, target.bank, kCore);
+  p.crouch = lerp(p.crouch, target.crouch, kCore);
+
+  // A running stride follows the leg cycle smoothly; sudden stance shifts bleed away cleanly.
   const jump = Math.atan2(Math.sin(target.phase - rig.ph.target), Math.cos(target.phase - rig.ph.target));
   if (Math.abs(jump) > 0.6) rig.ph.off -= jump;
   rig.ph.target = target.phase;
   rig.ph.off *= Math.exp(-dt * 12);
   p.phase = target.phase + rig.ph.off;
   p.spin = target.spin;
-  p.roll = Math.abs(target.roll - rig.cur.roll) > 1 ? target.roll : p.roll;
-  rig.cur = p;
+  p.roll = Math.abs(target.roll - p.roll) > 1 ? target.roll : lerp(p.roll, target.roll, kLimb);
   for (const c of rig.capes) c.update(dt, rig.root.position, rig.root.rotation.y, Math.sin(p.phase) * p.legs);
 
   const beast = !!rig.look.beast;
-  rig.body.position.y = rig.hipH + p.drop - p.crouch * (beast ? 0.15 : 0.32);
+  // Subtle double-frequency run bounce (peaks over mid-stance, dips on wide stride).
+  const strideBounce = beast ? 0 : (Math.abs(Math.cos(p.phase)) * 0.036 - 0.016) * p.legs;
+  rig.body.position.y = rig.hipH + p.drop + strideBounce - p.crouch * (beast ? 0.15 : 0.32);
   rig.body.position.x = p.sway;
   rig.body.rotation.set(p.roll, p.spin, p.bank);
-  rig.torso.rotation.set(beast ? 0 : p.lean, beast ? 0 : p.twist, beast ? 0 : -p.sway * 1.2);
+  rig.torso.rotation.set(beast ? 0 : p.lean, beast ? 0 : p.twist, beast ? 0 : -p.sway * 1.15);
   // The head stays level: it counters the torso's lean and twist like a real neck.
-  rig.head.rotation.set(p.head - (beast ? 0 : p.lean * 0.55), p.look - (beast ? 0 : p.twist * 0.5), beast ? 0 : p.sway * 1.5);
-  if (rig.chest) rig.chest.scale.y = 1.08 * (1 + p.breath * 0.025);
+  rig.head.rotation.set(p.head - (beast ? 0 : p.lean * 0.55), p.look - (beast ? 0 : p.twist * 0.5), beast ? 0 : p.sway * 1.4);
+  if (rig.chest) rig.chest.scale.y = (rig.look.head === "human" ? 0.92 : 1.08) * (1 + p.breath * 0.025);
 
   const s = Math.sin(p.phase);
   const c = Math.cos(p.phase);
@@ -982,17 +1196,32 @@ export function applyPose(rig: Rig, target: Pose, dt: number, rate = 20) {
   // Stride: the swing leg lifts its knee and plants heel first; the stance leg straightens and rolls to the toe.
   const a = p.legs;
   const bend = p.crouch;
-  const hipR = s * a * 0.85;
-  const hipL = -s * a * 0.85;
-  rig.legR.upper.rotation.set(hipR - bend * 1.0 - p.lean * 0.3, 0, -p.sway * 0.6);
-  rig.legL.upper.rotation.set(hipL - bend * 1.0 - p.lean * 0.3, 0, -p.sway * 0.6);
-  const kneeR = bend * 1.7 + Math.max(0, c) * a * 1.25 + a * 0.12;
-  const kneeL = bend * 1.7 + Math.max(0, -c) * a * 1.25 + a * 0.12;
+  const hipR = s * a * 0.84;
+  const hipL = -s * a * 0.84;
+  rig.legR.upper.rotation.set(hipR - bend * 1.0 - p.lean * 0.3, 0, -p.sway * 0.55);
+  rig.legL.upper.rotation.set(hipL - bend * 1.0 - p.lean * 0.3, 0, -p.sway * 0.55);
+  const kneeR = bend * 1.7 + Math.max(0, c) * a * 1.24 + a * 0.1;
+  const kneeL = bend * 1.7 + Math.max(0, -c) * a * 1.24 + a * 0.1;
   rig.legR.lower.rotation.x = kneeR;
   rig.legL.lower.rotation.x = kneeL;
   // Ankles keep the feet roughly flat to the street, toes lifting through the swing.
   rig.legR.end.rotation.x = -(hipR - bend * 1.0 + kneeR) * 0.85 + bend * 0.4 + Math.max(0, -s) * a * 0.25;
   rig.legL.end.rotation.x = -(hipL - bend * 1.0 + kneeL) * 0.85 + bend * 0.4 + Math.max(0, s) * a * 0.25;
+
+  // Articulated coat hems sweep clear of striding legs.
+  if (rig.coat) {
+    rig.coat.R.rotation.x = Math.min(0.18, hipR * 0.85) - a * 0.12 - bend * 0.45;
+    rig.coat.L.rotation.x = Math.min(0.18, hipL * 0.85) - a * 0.12 - bend * 0.45;
+    rig.coat.R.rotation.z = -a * 0.08 - bend * 0.1;
+    rig.coat.L.rotation.z = a * 0.08 + bend * 0.1;
+    rig.coat.back.rotation.x = a * 0.28 + Math.abs(s) * a * 0.1 + Math.max(0, p.lean) * 0.3;
+  }
+
+  // Subtle shoulder clavicle elevation when arms swing overhead.
+  if (rig.shoulders) {
+    rig.shoulders.R.position.y = 0.525 + Math.max(0, -p.armR[0] - 1.1) * 0.022;
+    rig.shoulders.L.position.y = 0.525 + Math.max(0, -p.armL[0] - 1.1) * 0.022;
+  }
 
   rig.armR.upper.rotation.set(p.armR[0], 0, -p.armR[1]);
   rig.armR.lower.rotation.x = p.armR[2];

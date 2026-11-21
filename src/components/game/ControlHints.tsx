@@ -24,10 +24,10 @@ export function ControlHints() {
   return (
     <div className="pointer-events-auto absolute bottom-4 left-4 hidden lg:block">
       {open ? (
-        <div className="w-60 border-l-4 border-border bg-background/70 p-2 backdrop-blur-sm">
+        <div className="w-60 border border-border border-l-2 border-l-accent bg-background/90 p-2">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Controls</span>
-            <button type="button" aria-label="Hide controls" onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground">
+            <button type="button" aria-label="Hide controls" onClick={() => setOpen(false)} className="text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
               <X className="size-3.5" />
             </button>
           </div>
@@ -41,7 +41,7 @@ export function ControlHints() {
           </dl>
         </div>
       ) : (
-        <button type="button" aria-label="Show controls" onClick={() => setOpen(true)} className="flex size-9 items-center justify-center border border-border bg-background/70 text-muted-foreground hover:text-foreground">
+        <button type="button" aria-label="Show controls" onClick={() => setOpen(true)} className="flex size-9 items-center justify-center border border-border bg-background/90 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
           <Keyboard className="size-4" />
         </button>
       )}

@@ -1,6 +1,6 @@
 import type { Archetype, Env, Nation, NationId, PoiKey } from "../types";
 
-// The five districts of a drowned, burning New York, their generals and their weather.
+// The five districts of a drowned, burning New York, their generals, distinct atmospheres and layouts.
 // All distances are in metres.
 
 export const NATION_ORDER: NationId[] = ["reeds", "snow", "tides", "lanterns", "ash"];
@@ -14,7 +14,26 @@ export const NATIONS: Record<NationId, Nation> = {
     blurb: "Flooded streets, marsh reeds through the asphalt, and empty ration depots.",
     giver: "Sae the Fixer",
     flip: false,
-    env: { fog: 0x56606b, fogDensity: 0.0135, sky: 0x1e2734, ground: 0x4a4e52, building: 0x8a8580, neon: [0xc8102e, 0xff5a1f, 0x9b111e], precip: "rain", fires: 10, water: true },
+    env: {
+      fog: 0x3b4f52,
+      fogDensity: 0.0085,
+      sky: 0x132224,
+      ground: 0x3b4442,
+      building: 0x7b7e76,
+      neon: [0xd83028, 0xff7a22, 0x38b89a],
+      precip: "rain",
+      fires: 10,
+      water: true,
+      hemiSky: 0x7ca2a6,
+      hemiGround: 0x34423b,
+      moonColor: 0xa6ccc8,
+      moonIntensity: 2.1,
+      lampColor: 0xffa64d,
+      gradeShadow: [0.87, 1.02, 1.0],
+      gradeHigh: [1.04, 1.0, 0.9],
+      bloom: 0.5,
+      waterColor: 0x122624,
+    },
     poi: {
       village: "The Culvert Hideout",
       fields: "The Flooded Lots",
@@ -63,7 +82,26 @@ export const NATIONS: Record<NationId, Nation> = {
     blurb: "A frozen cathedral cult on the heights, under endless sleet.",
     giver: "Brother Enzan",
     flip: true,
-    env: { fog: 0x66707a, fogDensity: 0.015, sky: 0x26303c, ground: 0x52565a, building: 0x908e8a, neon: [0xb3001b, 0xff6b2c], precip: "sleet", fires: 7, water: false },
+    env: {
+      fog: 0x7c90a4,
+      fogDensity: 0.009,
+      sky: 0x293b52,
+      ground: 0x8d9aa6,
+      building: 0xaab0b6,
+      neon: [0xc41c2c, 0xff9238],
+      precip: "sleet",
+      fires: 11,
+      water: false,
+      hemiSky: 0xc2daf2,
+      hemiGround: 0x5f6e7d,
+      moonColor: 0xdceeff,
+      moonIntensity: 2.6,
+      lampColor: 0xffb35c,
+      gradeShadow: [0.89, 0.97, 1.12],
+      gradeHigh: [1.06, 1.02, 0.96],
+      bloom: 0.45,
+      waterColor: 0x628099,
+    },
     poi: {
       village: "The Bodega Shelter",
       fields: "Riverside Woods",
@@ -113,7 +151,26 @@ export const NATIONS: Record<NationId, Nation> = {
     blurb: "Rusting piers, container stacks and black-sailed ships.",
     giver: "Net-Mender Ume",
     flip: false,
-    env: { fog: 0x515c66, fogDensity: 0.0135, sky: 0x1c2530, ground: 0x484c50, building: 0x8c8278, neon: [0xc8102e, 0xff7a1a], precip: "rain", fires: 9, water: true },
+    env: {
+      fog: 0x2c4252,
+      fogDensity: 0.0085,
+      sky: 0x0e1e2e,
+      ground: 0x3b444b,
+      building: 0x887c72,
+      neon: [0xff3828, 0xff9a1f, 0x20d694],
+      precip: "rain",
+      fires: 9,
+      water: true,
+      hemiSky: 0x7098b8,
+      hemiGround: 0x363a3e,
+      moonColor: 0xa6c4e0,
+      moonIntensity: 2.2,
+      lampColor: 0xffb84d,
+      gradeShadow: [0.85, 0.97, 1.1],
+      gradeHigh: [1.08, 0.99, 0.86],
+      bloom: 0.55,
+      waterColor: 0x0c2130,
+    },
     poi: {
       village: "Net-Menders' Row",
       fields: "The Shallows",
@@ -162,7 +219,26 @@ export const NATIONS: Record<NationId, Nation> = {
     blurb: "A city of endless night, signs that never switch off and theatres full of spies.",
     giver: "Okiku the Sign-Maker",
     flip: true,
-    env: { fog: 0x5c5258, fogDensity: 0.013, sky: 0x251d26, ground: 0x4a464a, building: 0x88807e, neon: [0xe0102a, 0xff4d1a, 0xff8a1f, 0xb0001a], precip: "rain", fires: 6, water: false },
+    env: {
+      fog: 0x3a2244,
+      fogDensity: 0.0082,
+      sky: 0x1a0c26,
+      ground: 0x2b2632,
+      building: 0x7e7688,
+      neon: [0xff1a5a, 0x00e0ff, 0xffa01a, 0xd828ff, 0xe8102a],
+      precip: "rain",
+      fires: 5,
+      water: false,
+      hemiSky: 0x9b70c4,
+      hemiGround: 0x45263c,
+      moonColor: 0xc2a0ff,
+      moonIntensity: 1.9,
+      lampColor: 0xff5a8a,
+      gradeShadow: [0.96, 0.88, 1.12],
+      gradeHigh: [1.1, 0.96, 1.04],
+      bloom: 0.78,
+      waterColor: 0x1a0f26,
+    },
     poi: {
       village: "Sign-Makers' Alley",
       fields: "Theatre Street",
@@ -209,7 +285,26 @@ export const NATIONS: Record<NationId, Nation> = {
     blurb: "The old seat of power, burnt to the girders beneath the Lantern Tower.",
     giver: "Hana the Gravekeeper",
     flip: false,
-    env: { fog: 0x6a564a, fogDensity: 0.015, sky: 0x2e2018, ground: 0x4c433c, building: 0x847a70, neon: [0xc8102e, 0xff5a1f], precip: "ash", fires: 16, water: false },
+    env: {
+      fog: 0x523226,
+      fogDensity: 0.0092,
+      sky: 0x26100a,
+      ground: 0x352c28,
+      building: 0x6c625a,
+      neon: [0xff3018, 0xff7818],
+      precip: "ash",
+      fires: 18,
+      water: false,
+      hemiSky: 0xbd7a58,
+      hemiGround: 0x4a2416,
+      moonColor: 0xffa06a,
+      moonIntensity: 2.3,
+      lampColor: 0xff6b24,
+      gradeShadow: [1.04, 0.9, 0.84],
+      gradeHigh: [1.14, 0.96, 0.82],
+      bloom: 0.68,
+      waterColor: 0xff4210,
+    },
     poi: {
       village: "The Gravekeeper's Shelter",
       fields: "The Camellia Roof Garden",
@@ -252,26 +347,134 @@ export const NATIONS: Record<NationId, Nation> = {
   },
 };
 
-// ---------- Zone layout ----------
+// ---------- Per-district spatial layouts ----------
 
-export const ZONE_W = 180;
-export const ZONE_H = 110;
+export const ZONE_W = 250;
+export const ZONE_H = 154;
 
-const BASE_POI: Record<PoiKey, [number, number]> = {
-  village: [24, 55],
-  fields: [57, 27],
-  road: [62, 78],
-  water: [97, 91],
-  ruin: [99, 20],
-  camp: [114, 56],
-  outer: [140, 55],
-  inner: [155.5, 55],
-  throne: [170, 55],
+export interface DistrictLayout {
+  pois: Record<PoiKey, [number, number]>;
+  fortress: { x: number; y: number; w: number; h: number };
+  innerX: number;
+  camps: [number, number][];
+}
+
+export const DISTRICT_LAYOUTS: Record<NationId, DistrictLayout> = {
+  // Queens: wide marshy flood basins north & south, Toll Boulevard spine under the El, eastern Depot.
+  reeds: {
+    pois: {
+      village: [26, 80],
+      fields: [84, 34],
+      road: [84, 80],
+      water: [122, 120],
+      ruin: [144, 34],
+      camp: [154, 80],
+      outer: [194, 77],
+      inner: [216, 77],
+      throne: [236, 77],
+    },
+    fortress: { x: 184, y: 48, w: 60, h: 58 },
+    innerX: 206,
+    camps: [
+      [62, 52],
+      [114, 62],
+      [96, 114],
+      [164, 48],
+    ],
+  },
+  // Upper Manhattan: Bodega shelter SW, Riverside pine woods NW, Thousand Steps spine to NE Cathedral.
+  snow: {
+    pois: {
+      village: [28, 114],
+      fields: [60, 44],
+      road: [100, 78],
+      water: [108, 128],
+      ruin: [136, 30],
+      camp: [156, 104],
+      outer: [192, 50],
+      inner: [214, 50],
+      throne: [234, 50],
+    },
+    fortress: { x: 182, y: 20, w: 62, h: 60 },
+    innerX: 204,
+    camps: [
+      [66, 92],
+      [104, 48],
+      [134, 86],
+      [164, 122],
+    ],
+  },
+  // Red Hook Docks: Net-Menders' Row NW, southern waterfront shallows & harbor chain, container yard center, SE Storm Deck & Black Flagship.
+  tides: {
+    pois: {
+      village: [30, 42],
+      fields: [74, 120],
+      road: [84, 66],
+      water: [142, 128],
+      ruin: [134, 30],
+      camp: [150, 76],
+      outer: [192, 102],
+      inner: [216, 102],
+      throne: [236, 102],
+    },
+    fortress: { x: 180, y: 70, w: 64, h: 62 },
+    innerX: 204,
+    camps: [
+      [66, 36],
+      [112, 94],
+      [116, 52],
+      [166, 44],
+    ],
+  },
+  // Lower East Side: Neon Alley west, central Festival Square pagoda plaza, tight canyon avenues, eastern Grand Kabuki Theatre.
+  lanterns: {
+    pois: {
+      village: [28, 76],
+      fields: [74, 34],
+      road: [80, 108],
+      water: [128, 77],
+      ruin: [136, 28],
+      camp: [156, 118],
+      outer: [194, 77],
+      inner: [216, 77],
+      throne: [236, 77],
+    },
+    fortress: { x: 184, y: 45, w: 60, h: 64 },
+    innerX: 206,
+    camps: [
+      [66, 66],
+      [102, 46],
+      [114, 114],
+      [164, 46],
+    ],
+  },
+  // Lower Manhattan: Gravekeeper's Shelter west, Camellia Roof Garden NW, River of Embers south, colossal Lantern Tower Citadel east.
+  ash: {
+    pois: {
+      village: [28, 77],
+      fields: [80, 34],
+      road: [88, 108],
+      water: [134, 120],
+      ruin: [136, 30],
+      camp: [156, 77],
+      outer: [192, 77],
+      inner: [214, 77],
+      throne: [234, 77],
+    },
+    fortress: { x: 180, y: 42, w: 64, h: 68 },
+    innerX: 204,
+    camps: [
+      [68, 70],
+      [110, 60],
+      [114, 98],
+      [164, 42],
+    ],
+  },
 };
 
 export function poiPos(nation: NationId, key: PoiKey): { x: number; y: number } {
-  const [x, y] = BASE_POI[key];
-  return { x, y: NATIONS[nation].flip ? ZONE_H - y : y };
+  const [x, y] = DISTRICT_LAYOUTS[nation].pois[key];
+  return { x, y };
 }
 
 // The Night of Red Camellias: the plaza beneath the Lantern Tower, used by Memory missions.
@@ -291,15 +494,24 @@ export const MEMORY_POI: Record<PoiKey, { x: number; y: number; name: string }> 
 };
 
 export const MEMORY_ENV: Env = {
-  fog: 0x5e4038,
-  fogDensity: 0.014,
-  sky: 0x2a1612,
-  ground: 0x4a3e3a,
+  fog: 0x5a362c,
+  fogDensity: 0.0095,
+  sky: 0x2a1410,
+  ground: 0x453935,
   building: 0x7c706a,
   neon: [0xc8102e, 0xff5a1f],
   precip: "ash",
   fires: 14,
   water: false,
+  hemiSky: 0xb88470,
+  hemiGround: 0x4a2a20,
+  moonColor: 0xffb080,
+  moonIntensity: 2.2,
+  lampColor: 0xff7a30,
+  gradeShadow: [1.02, 0.92, 0.88],
+  gradeHigh: [1.1, 0.98, 0.86],
+  bloom: 0.62,
+  waterColor: 0xff4210,
 };
 
 export const MEMORY_ENEMIES: Record<Archetype, { name: string; color: number }> = {

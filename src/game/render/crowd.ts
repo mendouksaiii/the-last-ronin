@@ -23,7 +23,7 @@ export class Ground {
   }
   free(x: number, y: number, pad = 0.45, onlyHouses = false) {
     const z = this.zone;
-    if (x < 2 || y < 2 || x > z.w - 2 || y > z.h - 2) return false;
+    if (x < 2.5 || y < 2.5 || x > z.w - 2.5 || y > z.h - 2.5) return false;
     for (const r of onlyHouses ? this.houses : this.solids) {
       if (x > r.x - pad && x < r.x + r.w + pad && y > r.y - pad && y < r.y + r.h + pad) return false;
     }
@@ -88,18 +88,21 @@ export class Crowd {
     const rig = buildRig(look);
     const umbrella = this.rainy && mood !== "warm" && mood !== "squat" && Math.random() < 0.35;
     if (umbrella) {
-      // A black umbrella held up in the left hand.
+      // A black umbrella gripped naturally in the left hand (local +z aligns with world +y when armL sums to -pi/2).
       const u = new THREE.Group();
-      u.position.set(0.16, 0.5, 0.22);
-      const pole = part(cyl(0.008, 0.008, 1.0, 6), mats().iron);
-      pole.position.y = 0.45;
+      u.position.set(0, -0.05, 0.01);
+      u.rotation.x = Math.PI / 2;
+      const pole = part(cyl(0.008, 0.008, 0.96, 8), mats().iron);
+      pole.position.y = 0.44;
+      const handle = part(cyl(0.014, 0.014, 0.11, 8), mats().wood);
+      handle.position.y = -0.02;
       const canopyMat = clothMat(0x101114);
       canopyMat.side = THREE.DoubleSide;
-      const canopy = part(new THREE.ConeGeometry(0.55, 0.24, 10, 1, true), canopyMat);
-      canopy.position.y = 0.95;
+      const canopy = part(new THREE.ConeGeometry(0.56, 0.24, 12, 1, true), canopyMat);
+      canopy.position.y = 0.94;
       canopy.userData.own = true;
-      u.add(pole, canopy);
-      rig.torso.add(u);
+      u.add(pole, handle, canopy);
+      rig.armL.end.add(u);
       rig.mats.push(canopyMat);
     }
     rig.root.position.set(at.x, 0, at.y);
@@ -239,17 +242,28 @@ export class Crowd {
 
     const moving = p.mood === "walk" || p.mood === "flee";
     const want = p.mood === "flee" ? 5.6 : moving ? p.pace : 0;
-    p.speed += (want - p.speed) * (1 - Math.exp(-dt * (p.mood === "flee" ? 6 : 3)));
+    p.speed += (want - p.speed) * (1 - Math.exp(-dt * (p.mood === "flee" ? 6 : 3.2)));
     if (p.speed > 0.05) {
-      // Steer round walls, cars and the hero, testing directions either side of the wish.
+      // Smoothly steer round walls, cars, the hero, and other pedestrians.
       let wish = p.heading;
-      if (dHero < 2.2 && p.mood !== "flee") {
+      if (dHero < 2.4 && p.mood !== "flee") {
         const away = Math.atan2(p.y - hero.y, p.x - hero.x);
-        if (Math.abs(wrap(away - p.heading)) > 1.2) wish = p.heading + Math.sign(wrap(away - p.heading)) * 0.8;
+        if (Math.abs(wrap(away - p.heading)) > 1.0) wish = p.heading + Math.sign(wrap(away - p.heading)) * 0.75;
       }
-      const look = 1.2 + p.speed * 0.25;
+      for (const o of this.peds) {
+        if (o === p) continue;
+        const dx = p.x - o.x;
+        const dy = p.y - o.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 0.05 && d < 1.15) {
+          const away = Math.atan2(dy, dx);
+          const rel = wrap(away - wish);
+          if (Math.abs(rel) < 2.2) wish += Math.sign(rel || 1) * (1.15 - d) * 0.7;
+        }
+      }
+      const look = 1.15 + p.speed * 0.25;
       let found = false;
-      for (const off of [0, 0.35, -0.35, 0.75, -0.75, 1.2, -1.2, 1.8, -1.8, Math.PI]) {
+      for (const off of [0, 0.3, -0.3, 0.65, -0.65, 1.05, -1.05, 1.55, -1.55, 2.2, -2.2, Math.PI]) {
         const h = wish + off;
         if (g.free(p.x + Math.cos(h) * look, p.y + Math.sin(h) * look, 0.4)) {
           wish = h;
@@ -257,54 +271,80 @@ export class Crowd {
           break;
         }
       }
-      if (!found) p.speed *= 0.5;
+      if (!found) p.speed *= Math.exp(-dt * 4);
       const turn = wrap(wish - p.heading);
-      p.heading += Math.max(-dt * 4, Math.min(dt * 4, turn));
+      p.heading += turn * (1 - Math.exp(-dt * (p.mood === "flee" ? 9 : 4.5)));
       const nx = p.x + Math.cos(p.heading) * p.speed * dt;
       const ny = p.y + Math.sin(p.heading) * p.speed * dt;
       if (g.free(nx, ny, 0.35)) {
-        const step = Math.min(1.8, Math.max(0.6, 0.55 + p.speed * 0.18));
+        const step = Math.min(1.8, Math.max(0.62, 0.62 + p.speed * 0.13));
         p.phase += ((p.speed * dt) / step) * Math.PI;
         p.x = nx;
         p.y = ny;
-      } else p.heading += 1.2;
+      } else {
+        p.heading += dt * 2.8;
+        p.speed *= 0.85;
+      }
     } else if (p.focus) {
-      p.heading += wrap(Math.atan2(p.focus.y - p.y, p.focus.x - p.x) - p.heading) * Math.min(1, dt * 3);
+      p.heading += wrap(Math.atan2(p.focus.y - p.y, p.focus.x - p.x) - p.heading) * (1 - Math.exp(-dt * 4));
     }
 
     // Pose.
     let pose = mixPose(restPose(), IDLE_ARMS, 1);
     pose.breath = Math.sin(time * (p.mood === "flee" ? 6 : 2) + p.seed);
-    const legs = Math.min(1, p.speed / 4.5) * 0.8;
+    const legs = Math.min(1, p.speed / 3.9) * 0.78;
     switch (p.mood) {
       case "flee":
-        pose.lean = 0.32;
-        pose.armR = [-0.2, 0.18, -1.3];
-        pose.armL = [-0.2, 0.18, -1.3];
+        pose.lean = 0.28;
+        pose.armR = [-0.25, 0.18, -1.35];
+        pose.armL = [-0.25, 0.18, -1.35];
         pose = gait(pose, legs, p.phase, [0.9, 0.9]);
-        pose.head = -0.15;
+        pose.head = -0.14;
         break;
       case "warm":
-        pose = mixPose(pose, { armR: [-1.15, -0.1, -1.05], armL: [-1.15, -0.1, -1.05], lean: 0.12, head: 0.25 }, 1);
-        pose.sway = Math.sin(time * 0.7 + p.seed) * 0.03;
-        pose.wrist = Math.sin(time * 1.3 + p.seed) * 0.2;
+        pose = mixPose(
+          pose,
+          {
+            armR: [-1.1 + Math.sin(time * 3 + p.seed) * 0.04, -0.12, -1.05],
+            armL: [-1.1 - Math.sin(time * 3 + p.seed) * 0.04, -0.12, -1.05],
+            lean: 0.08,
+            head: 0.18,
+          },
+          1,
+        );
+        pose.sway = Math.sin(time * 0.7 + p.seed) * 0.025;
+        pose.wrist = Math.sin(time * 2.4 + p.seed) * 0.22;
         break;
       case "talk": {
-        const gest = Math.max(0, Math.sin(time * 1.6 + p.seed));
-        pose = mixPose(pose, { armR: [-0.5 - gest * 0.6, 0.25, -1.3], armL: [-0.15, 0.15, -0.6], head: Math.sin(time * 2.3 + p.seed) * 0.08 }, 1);
-        pose.look = Math.sin(time * 0.5 + p.seed) * 0.15;
-        pose.sway = Math.sin(time * 0.6 + p.seed) * 0.025;
+        // Alternate conversational cadence between speakers using seed parity.
+        const speaker = Math.sin(time * 1.15 + p.seed) > 0;
+        const gest = speaker ? Math.max(0, Math.sin(time * 2.4 + p.seed)) : 0.12;
+        pose = mixPose(
+          pose,
+          {
+            armR: [-0.42 - gest * 0.52, 0.22, -1.15 - gest * 0.25],
+            armL: [-0.14, 0.14, -0.55],
+            head: speaker ? Math.sin(time * 2.6 + p.seed) * 0.07 : Math.sin(time * 1.4 + p.seed) * 0.05,
+          },
+          1,
+        );
+        pose.look = Math.sin(time * 0.5 + p.seed) * 0.12;
+        pose.sway = Math.sin(time * 0.6 + p.seed) * 0.022;
         break;
       }
       case "squat":
-        pose = mixPose(pose, { crouch: 0.85, lean: 0.4, head: 0.25, armR: [-0.9, 0.25, -0.7], armL: [-0.9, 0.25, -0.7] }, 1);
+        pose = mixPose(pose, { crouch: 0.84, lean: 0.34, head: 0.2, armR: [-0.88, 0.24, -0.72], armL: [-0.88, 0.24, -0.72] }, 1);
         break;
       default:
         pose = gait(pose, legs, p.phase, [0.4, 0.45]);
-        pose.lean = 0.04;
-        if (p.mood === "idle") pose.look = Math.sin(time * 0.4 + p.seed) * 0.5;
+        pose.lean = 0.02 + Math.min(0.06, p.speed * 0.02);
+        pose.head = -0.02;
+        if (p.mood === "idle") {
+          pose.look = Math.sin(time * 0.42 + p.seed) * 0.42;
+          pose.sway = Math.sin(time * 0.6 + p.seed) * 0.02;
+        }
     }
-    if (p.umbrella) pose.armL = [-0.75, 0.12, -1.55];
+    if (p.umbrella) pose.armL = [-0.32, 0.14, -1.25];
     // Glance at the hero as he passes.
     if (dHero < 6 && p.mood !== "flee") {
       const rel = wrap(Math.atan2(hero.y - p.y, hero.x - p.x) - p.heading);

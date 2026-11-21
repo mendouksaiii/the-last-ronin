@@ -176,13 +176,28 @@ export interface Env {
   sky: number;
   ground: number;
   building: number;
-  /** Neon sign colours, mostly reds with the odd orange. */
+  /** Neon sign colours for the district. */
   neon: number[];
   precip: "rain" | "sleet" | "ash";
-  /** Number of burning barrels scattered through the streets. */
+  /** Number of burning barrels or braziers scattered through the streets. */
   fires: number;
   /** Flooded ground or open water around the water point. */
   water: boolean;
+  /** Hemisphere sky and ground bounce colours. */
+  hemiSky: number;
+  hemiGround: number;
+  /** Directional moonlight / overcast key colour and strength. */
+  moonColor: number;
+  moonIntensity: number;
+  /** Street lamp / brazier illumination colour. */
+  lampColor: number;
+  /** Colour grade split-tone multipliers (RGB). */
+  gradeShadow: [number, number, number];
+  gradeHigh: [number, number, number];
+  /** Post-processing bloom intensity. */
+  bloom: number;
+  /** Tint for canals, harbour basins or ice sheets. */
+  waterColor: number;
 }
 
 export interface General {

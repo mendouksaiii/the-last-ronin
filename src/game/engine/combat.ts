@@ -199,13 +199,27 @@ function land(g: Game) {
   if (!move) return;
   const base = g.pdmg() * move.dmg * a.bonus;
   let hit = 0;
+  const singleChain = p.weapon === "kusari" && move.arc < 0.5;
+  let bestChain: Enemy | null = null;
+  let bestChainD = Infinity;
   for (const e of living(g)) {
-    if (dist(p, e) > move.range + e.radius) continue;
+    const d = dist(p, e);
+    if (d > move.range + e.radius) continue;
     if (angleDiff(Math.atan2(e.y - p.y, e.x - p.x), p.facing) > move.arc + 0.12) continue;
+    if (!g.lineOfSight(p, e, false)) continue;
+    if (singleChain) {
+      if (d < bestChainD) {
+        bestChainD = d;
+        bestChain = e;
+      }
+      continue;
+    }
     hitEnemy(g, e, base, move, a.bonus > 1);
     hit++;
-    // The chain weight stops at the first body it strikes.
-    if (p.weapon === "kusari" && move.arc < 0.5) break;
+  }
+  if (bestChain) {
+    hitEnemy(g, bestChain, base, move, a.bonus > 1);
+    hit++;
   }
   if (move.anim === "overhead" || move.anim === "spin") g.burst({ k: "dust", x: p.x + Math.cos(p.facing) * 1.2, y: p.y + Math.sin(p.facing) * 1.2, n: 8, dir: p.facing });
   if (!hit && move.anim === "throw") g.burst({ k: "spark", x: p.x + Math.cos(p.facing) * move.range, y: p.y + Math.sin(p.facing) * move.range, n: 4, dir: p.facing });
@@ -231,6 +245,7 @@ export function hitEnemy(g: Game, e: Enemy, raw: number, move: Move, counter: bo
     if (e.poise >= e.maxPoise && e.state !== "stagger") {
       e.state = "stagger";
       e.t = e.boss ? 1.8 : 1.4;
+      e.guardT = 0;
       e.token = false;
       g.float(e, "Broken", "#ff5a1f", true);
     } else if (e.state === "windup" && !e.boss && (move.stagger >= 40 || counter) && e.arch !== "brute") {
@@ -284,6 +299,7 @@ export function hurtPlayer(g: Game, dmg: number, from: Vec | null, perilous: boo
       if (attacker.poise >= attacker.maxPoise) {
         attacker.state = "stagger";
         attacker.t = attacker.boss ? 1.6 : 1.4;
+        attacker.guardT = 0;
         attacker.token = false;
         g.float(attacker, "Broken", "#ff5a1f", true);
       } else {
@@ -393,6 +409,11 @@ export function updateAct(g: Game, dt: number): boolean {
       return false;
     case "hurt":
     case "broken":
+      if (p.hp <= 0 && a.kind === "broken" && a.landed === 0 && a.t >= 0.8) {
+        a.landed = 1;
+        g.burst({ k: "dust", x: p.x, y: p.y, n: 10, dir: p.facing, r: 1.1 });
+        g.shake(0.14);
+      }
       if (p.hp > 0 && a.t >= a.dur) p.act = idleAct();
       return false;
     default:

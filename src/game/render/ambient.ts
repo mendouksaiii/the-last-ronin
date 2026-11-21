@@ -12,6 +12,10 @@ import { softDot } from "./textures";
 const TAU = Math.PI * 2;
 const dummy = new THREE.Object3D();
 dummy.rotation.order = "YZX";
+const _from = new THREE.Vector3();
+const _to = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _down = new THREE.Vector3(0, -1, 0);
 
 // ---------- Pigeons ----------
 
@@ -45,21 +49,29 @@ class Pigeons {
   constructor(
     private ground: Ground,
     private maxFlocks: number,
+    bodyColor = 0x55585f,
+    wingColor = 0x45474d,
   ) {
     const torso = new THREE.SphereGeometry(0.08, 10, 8);
     torso.scale(0.85, 0.8, 1.5);
     const head = new THREE.SphereGeometry(0.045, 8, 6);
     head.translate(0, 0.07, 0.12);
-    const bodyGeo = mergeGeometries([torso, head]) ?? torso;
-    const mat = new THREE.MeshStandardMaterial({ color: 0x55585f, roughness: 0.75 });
+    const bodyGeo = mergeGeometries([torso, head]);
+    if (bodyGeo) {
+      torso.dispose();
+      head.dispose();
+    } else {
+      head.dispose();
+    }
+    const mat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.75 });
     const wing = (side: number) => {
       const g = new THREE.PlaneGeometry(0.24, 0.1);
       g.rotateX(-Math.PI / 2);
       g.translate(side * 0.12, 0.02, -0.02);
       return g;
     };
-    const wingMat = new THREE.MeshStandardMaterial({ color: 0x45474d, roughness: 0.8, side: THREE.DoubleSide });
-    this.body = new THREE.InstancedMesh(bodyGeo, mat, MAX_BIRDS);
+    const wingMat = new THREE.MeshStandardMaterial({ color: wingColor, roughness: 0.8, side: THREE.DoubleSide });
+    this.body = new THREE.InstancedMesh(bodyGeo ?? torso, mat, MAX_BIRDS);
     this.wingL = new THREE.InstancedMesh(wing(1), wingMat, MAX_BIRDS);
     this.wingR = new THREE.InstancedMesh(wing(-1), wingMat, MAX_BIRDS);
     for (const m of [this.body, this.wingL, this.wingR]) {
@@ -89,7 +101,8 @@ class Pigeons {
     }
 
     let n = 0;
-    for (const f of [...this.flocks]) {
+    for (let fi = this.flocks.length - 1; fi >= 0; fi--) {
+      const f = this.flocks[fi];
       f.t += dt;
       const c = f.birds[0];
       const d = Math.hypot(c.x - hero.x, c.y - hero.y);
@@ -106,7 +119,7 @@ class Pigeons {
         }
       }
       if ((f.flying && f.t > 7) || d > 60) {
-        this.flocks.splice(this.flocks.indexOf(f), 1);
+        this.flocks.splice(fi, 1);
         continue;
       }
       for (let i = 0; i < f.birds.length && n < MAX_BIRDS; i++) {
@@ -153,9 +166,10 @@ class Pigeons {
         n++;
       }
     }
+    const hadBirds = this.body.count > 0;
     for (const m of [this.body, this.wingL, this.wingR]) {
       m.count = n;
-      m.instanceMatrix.needsUpdate = true;
+      if (n > 0 || hadBirds) m.instanceMatrix.needsUpdate = true;
     }
   }
 
@@ -188,7 +202,7 @@ class AirTraffic {
   private lanes: Lane[] = [];
   private pos: Float32Array;
 
-  constructor(cx: number, cz: number, count: number) {
+  constructor(cx: number, cz: number, count: number, palette: [number, number] = [0xfff1dc, 0xff3a30]) {
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI + Math.random() * 0.3;
       const dir = i % 2 ? 1 : -1;
@@ -207,9 +221,8 @@ class AirTraffic {
     const col = new Float32Array(n * 3);
     const c = new THREE.Color();
     for (let i = 0; i < n; i++) {
-      // Each craft shows a white headlight pair from the front and red tail-lights from behind.
       const lane = Math.floor(i / (PER_LANE * 2));
-      c.set(lane % 2 ? 0xfff1dc : 0xff3a30).multiplyScalar(2);
+      c.set(lane % 2 ? palette[0] : palette[1]).multiplyScalar(2);
       col.set([c.r, c.g, c.b], i * 3);
     }
     const g = new THREE.BufferGeometry();
@@ -231,8 +244,13 @@ class AirTraffic {
         const z = l.oz + l.dz * u;
         const y = l.alt + Math.sin(k * 3.1) * 3;
         // Two lights per craft, side by side.
-        this.pos.set([x - l.dz * 0.9, y, z + l.dx * 0.9], i * 3);
-        this.pos.set([x + l.dz * 0.9, y, z - l.dx * 0.9], i * 3 + 3);
+        const k0 = i * 3;
+        this.pos[k0] = x - l.dz * 0.9;
+        this.pos[k0 + 1] = y;
+        this.pos[k0 + 2] = z + l.dx * 0.9;
+        this.pos[k0 + 3] = x + l.dz * 0.9;
+        this.pos[k0 + 4] = y;
+        this.pos[k0 + 5] = z - l.dx * 0.9;
         i += 2;
       }
     }
@@ -281,6 +299,7 @@ class Drone {
     withLight: boolean,
     fade: THREE.Texture,
     dot: THREE.Texture,
+    beamColor = 0xc8dcff,
   ) {
     const keep = <T extends { dispose: () => void }>(x: T) => {
       this.disposables.push(x);
@@ -308,15 +327,15 @@ class Drone {
     beamGeo.translate(0, -0.5, 0);
     this.beam = new THREE.Mesh(
       beamGeo,
-      keep(new THREE.MeshBasicMaterial({ color: 0xc8dcff, alphaMap: fade, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })),
+      keep(new THREE.MeshBasicMaterial({ color: beamColor, alphaMap: fade, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide })),
     );
     const poolGeo = keep(new THREE.PlaneGeometry(1, 1));
     poolGeo.rotateX(-Math.PI / 2);
-    this.pool = new THREE.Mesh(poolGeo, keep(new THREE.MeshBasicMaterial({ color: 0xc8dcff, map: dot, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
+    this.pool = new THREE.Mesh(poolGeo, keep(new THREE.MeshBasicMaterial({ color: beamColor, map: dot, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })));
     this.group.add(this.craft, this.beam, this.pool);
     this.spot = null;
     if (withLight) {
-      this.spot = new THREE.SpotLight(0xd8e6ff, 160, 70, 0.17, 0.55, 1);
+      this.spot = new THREE.SpotLight(beamColor, 160, 70, 0.17, 0.55, 1);
       this.group.add(this.spot, this.spot.target);
     }
   }
@@ -337,12 +356,12 @@ class Drone {
     this.craft.rotation.set(0.08, Math.atan2(-Math.sin(t) * 24, Math.cos(t * 1.3) * 26), Math.sin(time * 0.9) * 0.05);
     const tx = this.center.x + Math.cos(time * 0.5 + this.phase * 2) * 10;
     const tz = this.center.y + Math.sin(time * 0.37 + this.phase) * 10;
-    const from = new THREE.Vector3(x, y - 0.3, z);
-    const to = new THREE.Vector3(tx, 0, tz);
-    const dir = to.clone().sub(from);
-    const len = dir.length();
-    this.beam.position.copy(from);
-    this.beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir.normalize());
+    _from.set(x, y - 0.3, z);
+    _to.set(tx, 0, tz);
+    _dir.copy(_to).sub(_from);
+    const len = _dir.length();
+    this.beam.position.copy(_from);
+    this.beam.quaternion.setFromUnitVectors(_down, _dir.normalize());
     this.beam.scale.set(3.6, len, 3.6);
     this.pool.position.set(tx, 0.06, tz);
     this.pool.scale.setScalar(9);
@@ -350,8 +369,8 @@ class Drone {
     this.red.visible = blink;
     this.blue.visible = !blink;
     if (this.spot) {
-      this.spot.position.copy(from);
-      this.spot.target.position.copy(to);
+      this.spot.position.copy(_from);
+      this.spot.target.position.copy(_to);
     }
   }
 
@@ -382,8 +401,9 @@ class Litter {
   constructor(
     private ground: Ground,
     count: number,
+    color = 0xb4ae9e,
   ) {
-    this.mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.34, 0.26), new THREE.MeshStandardMaterial({ color: 0xb4ae9e, roughness: 1, side: THREE.DoubleSide }), count);
+    this.mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.34, 0.26), new THREE.MeshStandardMaterial({ color, roughness: 1, side: THREE.DoubleSide }), count);
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
     this.wind = Math.random() * TAU;
@@ -449,10 +469,30 @@ export class Ambient {
 
   constructor(ground: Ground, lowPower: boolean) {
     const z = ground.zone;
-    this.pigeons = new Pigeons(ground, lowPower ? 1 : 3);
-    this.traffic = new AirTraffic(z.w / 2, z.h / 2, lowPower ? 4 : 8);
-    this.litter = new Litter(ground, lowPower ? 8 : 20);
-    for (let i = 0; i < (lowPower ? 1 : 2); i++) this.drones.push(new Drone(i * 2.7, !lowPower, this.fade, this.dot));
+    const nation = z.id === "memory" ? "ash" : z.nation;
+    const cfg: Record<
+      typeof z.nation,
+      {
+        birdBody: number;
+        birdWing: number;
+        lanes: number;
+        laneCols: [number, number];
+        drones: number;
+        beam: number;
+        litterCol: number;
+      }
+    > = {
+      reeds: { birdBody: 0x30383a, birdWing: 0x22282a, lanes: lowPower ? 2 : 4, laneCols: [0xffe0b0, 0xff5a28], drones: lowPower ? 1 : 2, beam: 0xc8e4dc, litterCol: 0x9c9884 },
+      snow: { birdBody: 0x262c34, birdWing: 0x1a2028, lanes: 2, laneCols: [0xd8e8ff, 0xff4048], drones: lowPower ? 0 : 1, beam: 0xd8ecff, litterCol: 0xd8e4f0 },
+      tides: { birdBody: 0xc2ccd4, birdWing: 0x8e9aa6, lanes: lowPower ? 2 : 4, laneCols: [0xffe4b8, 0x38e0c8], drones: lowPower ? 0 : 1, beam: 0xbee8f0, litterCol: 0xb0aa98 },
+      lanterns: { birdBody: 0x525662, birdWing: 0x424652, lanes: lowPower ? 6 : 12, laneCols: [0x38f0ff, 0xff2898], drones: lowPower ? 1 : 2, beam: 0xd0e8ff, litterCol: 0xb4ae9e },
+      ash: { birdBody: 0x282220, birdWing: 0x1a1614, lanes: 2, laneCols: [0xff9a50, 0xff2a18], drones: lowPower ? 1 : 2, beam: 0xffd0b0, litterCol: 0x3a2c28 },
+    };
+    const c = cfg[nation];
+    this.pigeons = new Pigeons(ground, lowPower ? 1 : 3, c.birdBody, c.birdWing);
+    this.traffic = new AirTraffic(z.w / 2, z.h / 2, c.lanes, c.laneCols);
+    this.litter = new Litter(ground, lowPower ? 8 : 20, c.litterCol);
+    for (let i = 0; i < c.drones; i++) this.drones.push(new Drone(i * 2.7, !lowPower, this.fade, this.dot, c.beam));
     this.group.add(this.pigeons.group, this.traffic.points, this.litter.mesh, ...this.drones.map((d) => d.group));
   }
 

@@ -23,6 +23,9 @@ class Particles {
   private drag: Float32Array;
   private base: Float32Array;
   private next = 0;
+  private activeCount = 0;
+  private colorDirty = false;
+  private hadAlive = false;
 
   constructor(
     readonly cap: number,
@@ -75,23 +78,39 @@ class Particles {
   spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, size: number, color: THREE.Color, grav = 0, drag = 0) {
     const i = this.next;
     this.next = (this.next + 1) % this.cap;
-    this.pos.set([x, y, z], i * 3);
-    this.vel.set([vx, vy, vz], i * 3);
-    this.col.set([color.r, color.g, color.b], i * 3);
+    const k = i * 3;
+    this.pos[k] = x;
+    this.pos[k + 1] = y;
+    this.pos[k + 2] = z;
+    this.vel[k] = vx;
+    this.vel[k + 1] = vy;
+    this.vel[k + 2] = vz;
+    this.col[k] = color.r;
+    this.col[k + 1] = color.g;
+    this.col[k + 2] = color.b;
+    if (this.life[i] <= 0) this.activeCount++;
     this.life[i] = life;
     this.max[i] = life;
     this.base[i] = size;
     this.grav[i] = grav;
     this.drag[i] = drag;
+    this.colorDirty = true;
   }
 
   update(dt: number, onLand?: (x: number, z: number) => void) {
+    if (this.activeCount === 0 && !this.hadAlive && !this.colorDirty) return;
+    let alive = 0;
     for (let i = 0; i < this.cap; i++) {
       if (this.life[i] <= 0) {
         this.alpha[i] = 0;
         continue;
       }
       this.life[i] -= dt;
+      if (this.life[i] <= 0) {
+        this.alpha[i] = 0;
+        continue;
+      }
+      alive++;
       const k = i * 3;
       const d = Math.pow(1 - Math.min(0.95, this.drag[i]), dt * 10);
       this.vel[k] *= d;
@@ -110,11 +129,16 @@ class Particles {
       this.alpha[i] = Math.min(1, t * 2.5);
       this.size[i] = this.base[i] * (0.5 + t * 0.5);
     }
+    this.activeCount = alive;
     const g = this.points.geometry;
     g.attributes.position.needsUpdate = true;
     g.attributes.alpha.needsUpdate = true;
     g.attributes.size.needsUpdate = true;
-    g.attributes.color.needsUpdate = true;
+    if (this.colorDirty) {
+      g.attributes.color.needsUpdate = true;
+      this.colorDirty = false;
+    }
+    this.hadAlive = alive > 0;
   }
 }
 
@@ -136,10 +160,16 @@ class Weather {
     if (kind === "rain") {
       this.pos = new Float32Array(n * 6);
       for (let i = 0; i < n; i++) {
+        const k = i * 6;
         const x = (Math.random() - 0.5) * BOX.w;
         const y = Math.random() * BOX.h;
         const z = (Math.random() - 0.5) * BOX.d;
-        this.pos.set([x, y, z, x + 0.12, y + 0.75, z + 0.04], i * 6);
+        this.pos[k] = x;
+        this.pos[k + 1] = y;
+        this.pos[k + 2] = z;
+        this.pos[k + 3] = x + 0.12;
+        this.pos[k + 4] = y + 0.75;
+        this.pos[k + 5] = z + 0.04;
         this.speed[i] = 20 + Math.random() * 8;
       }
       const g = new THREE.BufferGeometry();
@@ -148,12 +178,20 @@ class Weather {
     } else {
       this.pos = new Float32Array(n * 3);
       const col = new Float32Array(n * 3);
+      const scratch = new THREE.Color();
       for (let i = 0; i < n; i++) {
-        this.pos.set([(Math.random() - 0.5) * BOX.w, Math.random() * BOX.h, (Math.random() - 0.5) * BOX.d], i * 3);
+        const k = i * 3;
+        this.pos[k] = (Math.random() - 0.5) * BOX.w;
+        this.pos[k + 1] = Math.random() * BOX.h;
+        this.pos[k + 2] = (Math.random() - 0.5) * BOX.d;
         this.speed[i] = kind === "sleet" ? 5 + Math.random() * 3 : 0.6 + Math.random() * 0.8;
         const ember = kind === "ash" && Math.random() < 0.18;
-        const c = ember ? new THREE.Color(2.2, 0.7, 0.15) : kind === "ash" ? new THREE.Color(0.35, 0.33, 0.32) : new THREE.Color(0.6, 0.63, 0.66);
-        col.set([c.r, c.g, c.b], i * 3);
+        if (ember) scratch.setRGB(2.2, 0.7, 0.15);
+        else if (kind === "ash") scratch.setRGB(0.35, 0.33, 0.32);
+        else scratch.setRGB(0.6, 0.63, 0.66);
+        col[k] = scratch.r;
+        col[k + 1] = scratch.g;
+        col[k + 2] = scratch.b;
       }
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(this.pos, 3));
@@ -169,7 +207,7 @@ class Weather {
   update(dt: number, cam: THREE.Vector3, time: number) {
     // Drops live in world space and wrap around the camera, so they never jump.
     const wrap = (v: number, c: number, size: number) => {
-      const half = size / 2;
+      const half = size * 0.5;
       let r = v - c;
       if (r < -half) r += size * Math.ceil((-half - r) / size);
       else if (r > half) r -= size * Math.ceil((r - half) / size);
@@ -187,7 +225,12 @@ class Weather {
         if (y < 0) y += BOX.h;
         x = wrap(x, cx, BOX.w);
         z = wrap(z, cz, BOX.d);
-        this.pos.set([x, y, z, x + 0.12, y + 0.75, z + 0.04], k);
+        this.pos[k] = x;
+        this.pos[k + 1] = y;
+        this.pos[k + 2] = z;
+        this.pos[k + 3] = x + 0.12;
+        this.pos[k + 4] = y + 0.75;
+        this.pos[k + 5] = z + 0.04;
       }
     } else {
       const ash = this.kind === "ash";
@@ -200,10 +243,12 @@ class Weather {
         if (y < 0) y += BOX.h;
         x = wrap(x, cx, BOX.w);
         z = wrap(z, cz, BOX.d);
-        this.pos.set([x, y, z], k);
+        this.pos[k] = x;
+        this.pos[k + 1] = y;
+        this.pos[k + 2] = z;
       }
     }
-    (this.object as THREE.Points).geometry.attributes.position.needsUpdate = true;
+    (this.object as THREE.LineSegments | THREE.Points).geometry.attributes.position.needsUpdate = true;
   }
 }
 
@@ -227,8 +272,11 @@ const BLOOD_HI = new THREE.Color(0.55, 0.02, 0.03);
 const SPARK = new THREE.Color(3, 1.6, 0.6);
 const PARRY = new THREE.Color(3, 2.6, 2);
 const DUST = new THREE.Color(0.32, 0.3, 0.28);
+const RAIN_SPLASH = DUST.clone().multiplyScalar(1.6);
 const EMBER = new THREE.Color(2.4, 0.8, 0.2);
 const STONE = new THREE.Color(0.25, 0.24, 0.23);
+const _smokePos = new THREE.Vector3();
+const _smokeVel = new THREE.Vector3();
 
 export class Effects {
   group = new THREE.Group();
@@ -283,7 +331,8 @@ export class Effects {
     const p = this.puffs[this.puffI];
     this.puffI = (this.puffI + 1) % SMOKE_N;
     p.s.position.copy(pos);
-    p.v.copy(opts.v ?? new THREE.Vector3((Math.random() - 0.5) * 0.4, 1.2, (Math.random() - 0.5) * 0.4));
+    if (opts.v) p.v.copy(opts.v);
+    else p.v.set((Math.random() - 0.5) * 0.4, 1.2, (Math.random() - 0.5) * 0.4);
     p.life = p.max = opts.life ?? 3;
     const size = opts.size ?? 1;
     p.s.scale.setScalar(size);
@@ -339,8 +388,10 @@ export class Effects {
         for (let i = 0; i < Math.min(14, b.n); i++) {
           const a = r() * Math.PI * 2;
           const d = r() * rad;
-          this.smoke(new THREE.Vector3(x + Math.cos(a) * d, 0.3, z + Math.sin(a) * d), {
-            v: new THREE.Vector3(Math.cos(a) * 1.5, 0.4 + r() * 0.6, Math.sin(a) * 1.5),
+          _smokePos.set(x + Math.cos(a) * d, 0.3, z + Math.sin(a) * d);
+          _smokeVel.set(Math.cos(a) * 1.5, 0.4 + r() * 0.6, Math.sin(a) * 1.5);
+          this.smoke(_smokePos, {
+            v: _smokeVel,
             life: 1.2 + r(),
             size: 0.9 + r() * 0.8,
             color: 0x7a7672,
@@ -360,7 +411,8 @@ export class Effects {
           this.normal.spawn(x, 0.8 + r(), z, Math.cos(a) * sp, 2 + r() * 5, Math.sin(a) * sp, 1.2, 0.1 + r() * 0.1, STONE, 14);
           if (i % 3 === 0) this.additive.spawn(x, 0.8, z, Math.cos(a) * sp, 3 + r() * 4, Math.sin(a) * sp, 0.6, 0.06, SPARK, 10);
         }
-        this.smoke(new THREE.Vector3(x, 0.8, z), { size: 2.5, life: 2.5, color: 0x6a6662, opacity: 0.5 });
+        _smokePos.set(x, 0.8, z);
+        this.smoke(_smokePos, { size: 2.5, life: 2.5, color: 0x6a6662, opacity: 0.5 });
         break;
       case "ring": {
         const ring = this.rings.find((q) => q.t >= 1) ?? this.rings[0];
@@ -382,7 +434,7 @@ export class Effects {
     // Rain splashes on the street around the camera.
     if (this.precip === "rain") {
       for (let i = 0; i < 6; i++) {
-        this.splash.spawn(cam.x + (Math.random() - 0.5) * 30, 0.05, cam.z + (Math.random() - 0.5) * 30, 0, 0.6, 0, 0.18, 0.08, DUST.clone().multiplyScalar(1.6));
+        this.splash.spawn(cam.x + (Math.random() - 0.5) * 30, 0.05, cam.z + (Math.random() - 0.5) * 30, 0, 0.6, 0, 0.18, 0.08, RAIN_SPLASH);
       }
     }
     this.splash.update(dt);
@@ -394,10 +446,15 @@ export class Effects {
       for (const e of emitters) {
         if (Math.abs(e.pos.x - cam.x) > 45 || Math.abs(e.pos.z - cam.z) > 45) continue;
         if (e.kind === "fire") {
-          if (Math.random() < 0.6) this.smoke(e.pos.clone().setY(2), { v: new THREE.Vector3(0.3, 1.6, 0.1), life: 4, size: 1.1, color: 0x2a2624, opacity: 0.45 });
+          if (Math.random() < 0.6) {
+            _smokePos.set(e.pos.x, 2, e.pos.z);
+            _smokeVel.set(0.3, 1.6, 0.1);
+            this.smoke(_smokePos, { v: _smokeVel, life: 4, size: 1.1, color: 0x2a2624, opacity: 0.45 });
+          }
           this.additive.spawn(e.pos.x, e.pos.y + 0.5, e.pos.z, (Math.random() - 0.5) * 0.6, 1.5 + Math.random() * 2, (Math.random() - 0.5) * 0.6, 1.5, 0.05, EMBER, -0.3, 0.02);
         } else if (Math.random() < 0.7) {
-          this.smoke(e.pos, { v: new THREE.Vector3(0.2, 1.4, 0), life: 3, size: 1.3, color: 0x8a8886, opacity: 0.25 });
+          _smokeVel.set(0.2, 1.4, 0);
+          this.smoke(e.pos, { v: _smokeVel, life: 3, size: 1.3, color: 0x8a8886, opacity: 0.25 });
         }
       }
     }

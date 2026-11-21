@@ -24,7 +24,7 @@ export function WorldMap({ save, busy, onTravel, onClose }: Props) {
       <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto border border-border sm:rounded-none">
         <DialogHeader>
           <DialogTitle className="font-display text-4xl font-normal tracking-wider">Drowned New York</DialogTitle>
-          <DialogDescription className="font-bold">
+          <DialogDescription className="font-bold tabular-nums">
             {save.done.length} of 50 missions complete · {shards} of 5 shards of Daybreak recovered
             {busy && <span className="mt-1 block text-accent">Moving to another district abandons your current mission.</span>}
           </DialogDescription>
@@ -61,7 +61,7 @@ export function WorldMap({ save, busy, onTravel, onClose }: Props) {
                     {n.general.title}: {n.general.name}
                   </p>
                   <div className="mt-auto pt-1.5">
-                    <div className="mb-1 flex justify-between text-[11px] font-bold uppercase tracking-wider">
+                    <div className="mb-1 flex justify-between text-[11px] font-bold uppercase tabular-nums tracking-wider">
                       <span>Missions</span>
                       <span>{count} / 10</span>
                     </div>

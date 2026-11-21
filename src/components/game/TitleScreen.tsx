@@ -28,7 +28,7 @@ export function TitleScreen({ save, onContinue, onNew }: Props) {
       <div className="halftone absolute inset-0 opacity-30" />
 
       <div className="relative z-10 flex w-full max-w-3xl flex-col items-center gap-5 px-6 pb-12 text-center sm:pb-16">
-        <p className="animate-panel-in border-l-4 border-primary bg-background/70 px-3 py-1 text-xs font-bold uppercase tracking-[0.3em] text-foreground">
+        <p className="animate-panel-in border border-border border-l-2 border-l-primary bg-background/85 px-3 py-1 text-xs font-bold uppercase tracking-[0.3em] text-foreground">
           A cinematic action story in fifty missions
         </p>
         <h1 className="animate-panel-in font-display text-7xl leading-none tracking-wider text-foreground drop-shadow-[0_4px_0_hsl(var(--ink))] sm:text-9xl">The Last Ronin</h1>
@@ -53,7 +53,7 @@ export function TitleScreen({ save, onContinue, onNew }: Props) {
           )}
         </div>
         {save && (
-          <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <p className="text-xs font-bold uppercase tabular-nums tracking-wider text-muted-foreground">
             Level {save.level} · {save.done.length} of 50 missions complete
           </p>
         )}

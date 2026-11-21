@@ -25,27 +25,46 @@ export class Telegraph {
     this.group.visible = false;
   }
 
-  private shape(e: Enemy) {
+  private shapeKey(e: Enemy): string | null {
     const a = e.atk;
     const r = e.radius;
     switch (a.k) {
       case "cone":
-        return { key: `c${a.range}:${a.half}`, geo: new THREE.CircleGeometry((a.range ?? 2.3) + r, 28, -(a.half ?? 0.8), (a.half ?? 0.8) * 2), stretch: false };
+        return `c${a.range ?? 2.3}:${a.half ?? 0.8}:${r}`;
       case "slam":
-        return { key: `s${a.r}`, geo: new THREE.CircleGeometry(a.r ?? 2.6, 40), stretch: false };
+        return `s${a.r ?? 2.6}`;
+      case "charge":
+        return `h${(a.dist ?? 4.8) + r}:${a.width ?? 0.9}`;
+      case "shots":
+        return e.boss ? `p${a.reach}:${a.spread ?? 0}` : null;
+      case "summon":
+      case "decoys":
+      case "guard":
+        return "r";
+    }
+  }
+
+  private buildShape(e: Enemy): { geo: THREE.BufferGeometry; stretch: boolean } | null {
+    const a = e.atk;
+    const r = e.radius;
+    switch (a.k) {
+      case "cone":
+        return { geo: new THREE.CircleGeometry((a.range ?? 2.3) + r, 28, -(a.half ?? 0.8), (a.half ?? 0.8) * 2), stretch: false };
+      case "slam":
+        return { geo: new THREE.CircleGeometry(a.r ?? 2.6, 40), stretch: false };
       case "charge": {
         const len = (a.dist ?? 4.8) + r;
         const g = new THREE.PlaneGeometry(len, a.width ?? 0.9);
         g.translate(len / 2, 0, 0);
-        return { key: `h${len}:${a.width}`, geo: g, stretch: true };
+        return { geo: g, stretch: true };
       }
       case "shots":
         if (!e.boss) return null;
-        return { key: `p${a.reach}:${a.spread}`, geo: new THREE.CircleGeometry(a.reach, 28, -((a.spread ?? 0) / 2 + 0.06), (a.spread ?? 0) + 0.12), stretch: false };
+        return { geo: new THREE.CircleGeometry(a.reach, 28, -((a.spread ?? 0) / 2 + 0.06), (a.spread ?? 0) + 0.12), stretch: false };
       case "summon":
       case "decoys":
       case "guard":
-        return { key: `r`, geo: new THREE.RingGeometry(1.4, 1.6, 40), stretch: false };
+        return { geo: new THREE.RingGeometry(1.4, 1.6, 40), stretch: false };
     }
   }
 
@@ -55,19 +74,24 @@ export class Telegraph {
       this.group.visible = false;
       return;
     }
-    const s = this.shape(e);
-    if (!s) {
+    const key = this.shapeKey(e);
+    if (!key) {
       this.group.visible = false;
       return;
     }
-    if (s.key !== this.key) {
-      this.key = s.key;
+    if (key !== this.key) {
+      const s = this.buildShape(e);
+      if (!s) {
+        this.group.visible = false;
+        return;
+      }
+      this.key = key;
       this.outline.geometry.dispose();
       this.outline.geometry = s.geo;
       this.fill.geometry = s.geo;
       this.stretch = s.stretch;
       this.outline.rotation.x = this.fill.rotation.x = -Math.PI / 2;
-    } else s.geo.dispose();
+    }
     this.group.visible = true;
     this.group.position.set(e.x, 0, e.y);
     this.group.rotation.y = -e.aim;
@@ -81,5 +105,11 @@ export class Telegraph {
     const f = Math.max(0.02, k);
     if (this.stretch) this.fill.scale.set(f, 1, 1);
     else this.fill.scale.set(f, f, 1);
+  }
+
+  dispose() {
+    this.outline.geometry.dispose();
+    this.outMat.dispose();
+    this.fillMat.dispose();
   }
 }

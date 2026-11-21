@@ -16,9 +16,9 @@ export function QuestOffer({ mission, onAccept, onDecline }: Props) {
   const nation = NATIONS[mission.nation];
   return (
     <Dialog open onOpenChange={(open) => !open && onDecline()}>
-      <DialogContent className="max-w-md border border-border border-l-4 border-l-primary bg-background text-foreground sm:rounded-none">
+      <DialogContent className="max-w-md border border-border border-l-2 border-l-primary bg-background text-foreground sm:rounded-none">
         <DialogHeader>
-          <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-primary">
+          <p className="flex items-center gap-1.5 text-xs font-bold uppercase tabular-nums tracking-widest text-primary">
             <Icon className="size-4" /> {mission.cls} mission {mission.n} of 10 · {nation.name}
           </p>
           <DialogTitle className="font-display text-4xl font-normal tracking-wider">{mission.title}</DialogTitle>

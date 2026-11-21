@@ -35,7 +35,7 @@ function Row({ m, status, note }: { m: Mission; status: Status; note: string }) 
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className={cn("text-[11px] font-bold uppercase tracking-wider", status !== "locked" && "text-primary")}>
+        <p className={cn("text-[11px] font-bold uppercase tabular-nums tracking-wider", status !== "locked" && "text-primary")}>
           {m.n}. {m.cls}
         </p>
         <p className="font-display text-lg leading-tight tracking-wide">{m.title}</p>
@@ -58,7 +58,7 @@ export function QuestLog({ save, activeId, objective, onClose }: Props) {
       <SheetContent side="right" className="flex w-full flex-col gap-3 border-l border-border sm:max-w-md">
         <SheetHeader>
           <SheetTitle className="font-display text-4xl font-normal tracking-wider">Quest Log</SheetTitle>
-          <SheetDescription className="font-bold">{save.done.length} of 50 missions complete</SheetDescription>
+          <SheetDescription className="font-bold tabular-nums">{save.done.length} of 50 missions complete</SheetDescription>
         </SheetHeader>
         <Tabs defaultValue={save.nation} className="flex min-h-0 flex-1 flex-col">
           <TabsList className="grid w-full grid-cols-5">
@@ -73,7 +73,7 @@ export function QuestLog({ save, activeId, objective, onClose }: Props) {
             const next = MISSIONS[id].find((m) => !save.done.includes(m.id));
             return (
               <TabsContent key={id} value={id} className="min-h-0 flex-1 overflow-y-auto pr-1">
-                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                <p className="mb-2 text-xs font-bold uppercase tabular-nums tracking-wider text-muted-foreground">
                   {NATIONS[id].name} · {nationProgress(save, id)} / 10
                 </p>
                 <ul className="space-y-2 pb-2">
