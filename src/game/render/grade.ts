@@ -12,6 +12,9 @@ export const GRADE_SHADER = {
     cine: { value: 0 },
     stealth: { value: 0 },
     aspect: { value: 1 },
+    speedFx: { value: 0 },
+    flashAmt: { value: 0 },
+    flashTint: { value: new THREE.Vector3(1.0, 0.85, 0.5) },
     shadowTint: { value: new THREE.Vector3(0.94, 0.99, 1.07) },
     highTint: { value: new THREE.Vector3(1.05, 1.0, 0.93) },
   },
@@ -25,6 +28,9 @@ export const GRADE_SHADER = {
     uniform float cine;
     uniform float stealth;
     uniform float aspect;
+    uniform float speedFx;
+    uniform float flashAmt;
+    uniform vec3 flashTint;
     uniform vec3 shadowTint;
     uniform vec3 highTint;
     varying vec2 vUv;
@@ -32,7 +38,8 @@ export const GRADE_SHADER = {
     void main() {
       vec2 uv = vUv;
       vec2 d = uv - 0.5;
-      float ca = (0.0008 + hurt * 0.004) * length(d);
+      float rDist = length(d);
+      float ca = (0.0008 + hurt * 0.004 + speedFx * 0.0032 + flashAmt * 0.0025) * rDist;
       vec3 col = vec3(texture2D(tDiffuse, uv + d * ca).r, texture2D(tDiffuse, uv).g, texture2D(tDiffuse, uv - d * ca).b);
       float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
       float red = clamp((col.r - max(col.g, col.b)) * 2.0, 0.0, 1.0);
@@ -43,13 +50,27 @@ export const GRADE_SHADER = {
       col *= mix(shadowTint, highTint, smoothstep(0.05, 0.52, l));
       // Lift the blacks slightly so nothing sinks into pure black.
       col = col * 0.97 + vec3(0.012, 0.013, 0.016);
+      // Subtle peripheral motion streaks on sprints, slides, dodges, and dashes.
+      vec2 v = d * vec2(aspect, 1.0);
+      float vLen = length(v);
+      if (speedFx > 0.02) {
+        float ang = atan(v.y, v.x);
+        float rays = sin(ang * 38.0 + floor(time * 24.0) * 1.7) * sin(ang * 17.0 - floor(time * 18.0) * 2.3);
+        float edgeMask = smoothstep(0.36, 0.78, vLen);
+        float streak = smoothstep(0.32, 0.92, rays) * edgeMask * speedFx * 0.14;
+        col += vec3(0.75, 0.88, 1.0) * streak;
+      }
       // Fine grain and a soft vignette.
       col += (rand(uv * 731.0 + fract(time)) - 0.5) * 0.018;
-      vec2 v = d * vec2(aspect, 1.0);
-      float vig = smoothstep(1.25, 0.45, length(v));
+      float vig = smoothstep(1.25, 0.45, vLen);
       col *= mix(0.78, 1.0, vig);
       col *= 1.0 - stealth * 0.3 * (1.0 - vig);
       col = mix(col, col * vec3(1.4, 0.3, 0.3), hurt * (1.0 - vig) * 0.9);
+      // Transient parry / heal / level-up / lightning peripheral & highlight glow.
+      if (flashAmt > 0.005) {
+        float rim = mix(0.35, 1.0, 1.0 - vig);
+        col += flashTint * flashAmt * rim * 0.24;
+      }
       float bar = cine * 0.11;
       if (uv.y < bar || uv.y > 1.0 - bar) col = vec3(0.0);
       gl_FragColor = vec4(col, 1.0);

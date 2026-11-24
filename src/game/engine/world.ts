@@ -1,6 +1,6 @@
 import { DISTRICT_LAYOUTS, MEMORY_ENEMIES, MEMORY_ENV, MEMORY_H, MEMORY_POI, MEMORY_W, NATIONS, ZONE_H, ZONE_W, poiPos } from "../data/nations";
 import type { NationId, PoiKey, ZoneId } from "../types";
-import { dist, inRect, type Building, type BuildingKind, type Prop, type Rect, type Vec, type Zone } from "./state";
+import { dist, inRect, type Building, type BuildingKind, type Ledge, type Prop, type Rect, type Vec, type Zone } from "./state";
 
 // Builds each district of ruined New York from a fixed seed with its own urban layout,
 // architectural archetypes, landmark clearings, stronghold position and street dressing.
@@ -432,12 +432,14 @@ function buildMemory(nation: NationId): Zone {
   buildings.push({ x: 40, y: 13, w: 15, h: 7, height: 90, ruined: false, seed: 4242 });
   const base = { w: MEMORY_W, h: MEMORY_H, buildings, walls: [] as Rect[], env: MEMORY_ENV };
   const { props, cover } = streetProps("memory", rnd, base, 110, (p) => POI_KEYS.some((k) => dist(p, pois[k]) < 5));
+  const ledges = buildParkourLedges(buildings, MEMORY_W, MEMORY_H);
   return {
     id: "memory",
     nation,
     ...base,
     pois,
     cover,
+    ledges,
     gate: null,
     fortress: null,
     hall: null,
@@ -445,6 +447,145 @@ function buildMemory(nation: NationId): Zone {
     camps: [],
     enemies: MEMORY_ENEMIES,
   };
+}
+
+/** Places climbable wall holds (`2.0..2.25m` vertical spacing) and projecting foot beams on climbable buildings and containers. */
+function buildParkourLedges(buildings: Building[], w: number, h: number): Ledge[] {
+  const ledges: Ledge[] = [];
+  const nearBuilding = (px: number, py: number, skip: Building) =>
+    buildings.some((o) => o !== skip && px > o.x - 1.35 && px < o.x + o.w + 1.35 && py > o.y - 1.35 && py < o.y + o.h + 1.35);
+
+  for (const b of buildings) {
+    const rawTop = b.ruined ? b.height * 0.75 : b.height;
+    if (rawTop < 3.4) continue;
+    const isTower = rawTop > 22.5;
+    const maxZ = isTower ? 6.4 : rawTop - 1.45;
+    const step = 2.05;
+    // Choose 1 or 2 clear exterior faces depending on building seed.
+    const faceOrder = [(b.seed >> 1) % 4, ((b.seed >> 1) + 2) % 4];
+    const maxFaces = isTower ? 1 : b.style === "container" || rawTop <= 14 ? 2 : 1;
+    let added = 0;
+
+    for (const face of faceOrder) {
+      if (added >= maxFaces) break;
+      const horiz = face === 0 || face === 1;
+      const faceSpan = horiz ? b.w : b.h;
+      if (faceSpan < 3.0) continue;
+      const nx = face === 2 ? -1 : face === 3 ? 1 : 0;
+      const ny = face === 0 ? -1 : face === 1 ? 1 : 0;
+      const midX = face === 2 ? b.x - 0.5 : face === 3 ? b.x + b.w + 0.5 : b.x + b.w * 0.5;
+      const midY = face === 0 ? b.y - 0.5 : face === 1 ? b.y + b.h + 0.5 : b.y + b.h * 0.5;
+      if (midX < 2.8 || midX > w - 2.8 || midY < 2.8 || midY > h - 2.8) continue;
+      if (nearBuilding(midX, midY, b)) continue;
+
+      added++;
+      const holdSpan = Math.min(faceSpan * 0.68, 4.4);
+      const maxShift = Math.max(0, faceSpan * 0.5 - holdSpan * 0.5 - 0.45);
+      let tier = 0;
+      for (let z = 2.15; z <= maxZ; z += step) {
+        tier++;
+        const isBeam = (isTower && tier >= 2) || (tier % 2 === 0 && rawTop > 5.8 && b.style !== "container");
+        const depth = isBeam ? 0.92 : 0.28;
+        const thick = isBeam ? 0.22 : 0.16;
+        const span = isBeam ? Math.min(holdSpan, 3.2) : holdSpan;
+        // Stagger odd/even holds slightly sideways so diagonal ledge-hops trace clean lines.
+        const shift = tier % 2 === 1 ? -maxShift * 0.45 : maxShift * 0.45;
+        const tx = -ny;
+        const ty = nx;
+        const cx = (horiz ? b.x + b.w * 0.5 : face === 2 ? b.x - depth * 0.5 : b.x + b.w + depth * 0.5) + tx * shift;
+        const cy = (!horiz ? b.y + b.h * 0.5 : face === 0 ? b.y - depth * 0.5 : b.y + b.h + depth * 0.5) + ty * shift;
+        const lw = horiz ? span : depth;
+        const lh = horiz ? depth : span;
+        ledges.push({
+          x: cx - lw * 0.5,
+          y: cy - lh * 0.5,
+          z,
+          w: lw,
+          h: lh,
+          thickness: thick,
+          nx,
+          ny,
+          kind: isBeam ? "beam" : "hold",
+        });
+      }
+    }
+  }
+  return ledges;
+}
+
+/** Places a compact vaulted parkour block & multi-tier climbable tower just off the hideout lane without blocking any road. */
+function addHideoutCourse(
+  buildings: Building[],
+  cover: Rect[],
+  props: Prop[],
+  ledges: Ledge[],
+  village: Vec,
+  fortress: Rect,
+  camps: Vec[],
+  zoneW: number,
+  zoneH: number,
+) {
+  const candidates: [number, number][] = [
+    [13.5, -2.5],
+    [13.5, 4.5],
+    [-13.5, -2.5],
+    [11.5, -12.5],
+    [11.5, 10.5],
+  ];
+  let placed: Building | null = null;
+  for (const [ox, oy] of candidates) {
+    const tryX = village.x + ox;
+    const tryY = village.y + oy;
+    if (tryX < 10 || tryX > zoneW - 18 || tryY < 10 || tryY > zoneH - 18) continue;
+    const courseRect: Rect = { x: tryX, y: tryY, w: 6.4, h: 4.8 };
+    const cx = tryX + 3.2;
+    const cy = tryY + 2.4;
+    if (dist(village, { x: cx, y: cy }) < 9.5) continue;
+    const clearOfAll =
+      !inRect({ x: cx, y: cy }, fortress, 8) &&
+      !camps.some((c) => dist(c, { x: cx, y: cy }) < 8) &&
+      !buildings.some((b) => courseRect.x < b.x + b.w + 3.8 && courseRect.x + courseRect.w + 3.8 > b.x && courseRect.y < b.y + b.h + 3.8 && courseRect.y + courseRect.h + 3.8 > b.y);
+    if (!clearOfAll) continue;
+
+    // 2-tier rooftop practice block (`6.2m` tall) with front holds (`z = 2.15`, `z = 4.15`) + vault barrier.
+    const b: Building = {
+      x: courseRect.x,
+      y: courseRect.y,
+      w: courseRect.w,
+      h: courseRect.h,
+      height: 6.2,
+      ruined: false,
+      seed: 9012,
+      style: "warehouse",
+    };
+    buildings.push(b);
+    ledges.push(
+      { x: b.x + 0.8, y: b.y + b.h, z: 2.15, w: 2.6, h: 0.28, thickness: 0.16, nx: 0, ny: 1, kind: "hold" },
+      { x: b.x + 2.6, y: b.y + b.h, z: 4.15, w: 2.8, h: 0.88, thickness: 0.22, nx: 0, ny: 1, kind: "beam" },
+      { x: b.x - 0.9, y: b.y + 0.8, z: 2.15, w: 0.9, h: 3.0, thickness: 0.2, nx: -1, ny: 0, kind: "beam" },
+      { x: b.x - 0.28, y: b.y + 1.0, z: 4.2, w: 0.28, h: 2.8, thickness: 0.16, nx: -1, ny: 0, kind: "hold" },
+    );
+    placed = b;
+    break;
+  }
+
+  // Speed-vault barrier placed in an open spot near the hideout/course, clear of NPCs.
+  const barrierSpots: [number, number][] = placed
+    ? [
+        [placed.x - 3.2, placed.y + 2.4],
+        [village.x + 9.2, village.y - 4.2],
+        [village.x + 9.2, village.y + 4.2],
+      ]
+    : [[village.x + 9.2, village.y - 4.2]];
+  for (const [bx, by] of barrierSpots) {
+    if (bx < 6 || bx > zoneW - 6 || by < 6 || by > zoneH - 6) continue;
+    if (dist(village, { x: bx, y: by }) < 6.5) continue;
+    if (!buildings.some((o) => inRect({ x: bx, y: by }, o, 2.0)) && !cover.some((c) => inRect({ x: bx, y: by }, c, 2.0))) {
+      props.push({ x: bx, y: by, kind: "barrier", rot: Math.PI * 0.5, seed: 8081 });
+      cover.push({ x: bx - 0.35, y: by - 1.0, w: 0.7, h: 2.0 });
+      break;
+    }
+  }
 }
 
 export function buildZone(id: ZoneId, nation: NationId, gateOpen: boolean): Zone {
@@ -525,12 +666,16 @@ export function buildZone(id: ZoneId, nation: NationId, gateOpen: boolean): Zone
   props.push({ ...pois.village, x: pois.village.x + 3, kind: "fire", rot: 0, seed: 1 });
   for (const c of camps) props.push({ ...c, kind: "fire", rot: 0, seed: 2 });
 
+  const ledges = buildParkourLedges(buildings, ZONE_W, ZONE_H);
+  addHideoutCourse(buildings, cover, props, ledges, pois.village, f, camps, ZONE_W, ZONE_H);
+
   return {
     id,
     nation,
     ...base,
     pois,
     cover,
+    ledges,
     gate,
     fortress: f,
     hall,

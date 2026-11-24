@@ -1,4 +1,5 @@
 import { NATIONS } from "../data/nations";
+import { sound } from "../audio/soundEngine";
 import type { Archetype, AttackSpec } from "../types";
 import type { Game } from "./game";
 import { angleDiff, dist, segDist, type Enemy, type Vec } from "./state";
@@ -199,13 +200,27 @@ function resolve(g: Game, e: Enemy) {
     case "cone": {
       const range = spec.range ?? 2.3;
       const half = spec.half ?? 0.8;
+      sound.playSfx("swingLight", { at: e, volume: 0.72 });
+      g.burst({
+        k: "slash",
+        x: e.x,
+        y: e.y,
+        n: perilous ? 9 : 6,
+        dir: e.aim,
+        r: Math.max(1.45, range * 0.68),
+        tilt: (e.id % 2 === 0 ? 1 : -1) * (perilous ? 0.25 : 0.42),
+        color: perilous ? 0xff4a18 : 0xc8102e,
+      });
       g.hitFriends(e, (p, r) => dist(p, e) < range + r && angleDiff(Math.atan2(p.y - e.y, p.x - e.x), e.aim) < half, dmg, perilous);
       break;
     }
     case "slam": {
       const r = spec.r ?? 2.6;
+      sound.playSfx("hitHeavy", { at: e, volume: 0.92 });
       g.hitFriends(e, (p, pr) => dist(p, e) < r + pr, dmg, perilous);
-      g.burst({ k: "ring", x: e.x, y: e.y, n: 1, dir: 0, r });
+      g.burst({ k: "ring", x: e.x, y: e.y, n: 1, dir: 0, r, color: perilous ? 0xff4a18 : 0xe0303a });
+      g.burst({ k: "spark", x: e.x, y: e.y, n: 10, dir: 0, color: 0xff7828 });
+      g.burst({ k: "ripple", x: e.x, y: e.y, n: 6, dir: 0, r: r * 0.7 });
       g.burst({ k: "dust", x: e.x, y: e.y, n: 18, dir: 0, r });
       g.shake(0.35);
       break;
@@ -213,16 +228,24 @@ function resolve(g: Game, e: Enemy) {
     case "charge": {
       const from = { x: e.x, y: e.y };
       const d = spec.dist ?? 4.8;
+      sound.playSfx("swingHeavy", { at: e, volume: 0.82 });
       g.moveBody(e, Math.cos(e.aim) * d, Math.sin(e.aim) * d, e.radius, 0.2);
       g.clampToArena(e);
       const w = (spec.width ?? 0.9) / 2;
       g.hitFriends(e, (p, r) => segDist(p, from, e) < w + r, dmg, perilous);
       g.burst({ k: "dust", x: from.x, y: from.y, n: 10, dir: e.aim });
+      g.burst({ k: "slash", x: e.x, y: e.y, n: 8, dir: e.aim, r: 1.85, tilt: 0.14, color: perilous ? 0xff4a18 : 0xe03828 });
+      g.burst({ k: "spark", x: e.x, y: e.y, n: 8, dir: e.aim + Math.PI, color: 0xff7828 });
       break;
     }
     case "shots": {
       const count = spec.count ?? 1;
       const speed = spec.speed ?? 18;
+      const mx = e.x + Math.cos(e.aim) * 0.65;
+      const my = e.y + Math.sin(e.aim) * 0.65;
+      sound.playSfx("bowShot", { at: e, volume: 0.85 });
+      g.burst({ k: "spark", x: mx, y: my, n: 5, dir: e.aim, color: spec.pull ? 0xff2880 : 0xff7028 });
+      g.burst({ k: "ring", x: mx, y: my, z: 1.05, n: 1, dir: e.aim, r: 0.9, color: spec.pull ? 0xff2880 : 0xff7028 });
       for (let i = 0; i < count; i++) {
         const a = e.aim + (count > 1 ? (spec.spread ?? 0) * (i / (count - 1) - 0.5) : 0);
         g.shots.push({ x: e.x, y: e.y, sx: e.x, sy: e.y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, dmg, life: 1.4, pull: !!spec.pull, r: spec.pull ? 0.35 : 0.25 });
@@ -233,10 +256,12 @@ function resolve(g: Game, e: Enemy) {
       const adds = g.enemies.filter((o) => o.mission && !o.step && !o.decoy && o.state !== "dead").length;
       if (adds < 3) {
         for (let i = 0; i < (spec.count ?? 2); i++) {
-          g.enemies.push(makeEnemy(g, spec.arch ?? "melee", g.spot(e, 4, 7), { mission: true, chase: true }));
+          const at = g.spot(e, 4, 7);
+          g.enemies.push(makeEnemy(g, spec.arch ?? "melee", at, { mission: true, chase: true }));
+          g.burst({ k: "shadow", x: at.x, y: at.y, n: 8, dir: 0, r: 1.8, color: 0xe02040 });
         }
       }
-      g.burst({ k: "ring", x: e.x, y: e.y, n: 1, dir: 0, r: 4 });
+      g.burst({ k: "shadow", x: e.x, y: e.y, n: 12, dir: 0, r: 4, color: 0xe02040 });
       break;
     }
     case "decoys": {
@@ -252,13 +277,13 @@ function resolve(g: Game, e: Enemy) {
           e.y = at.y;
           g.clampToArena(e);
           e.facing = Math.atan2(p.y - e.y, p.x - e.x);
-          g.burst({ k: "dust", x: e.x, y: e.y, n: 12, dir: 0 });
+          g.burst({ k: "shadow", x: e.x, y: e.y, n: 10, dir: 0, r: 2.1, color: 0xd02050 });
         } else {
           const d = makeDecoy(g, e, at, Math.atan2(p.y - at.y, p.x - at.x));
           g.clampToArena(d);
           d.facing = Math.atan2(p.y - d.y, p.x - d.x);
           g.enemies.push(d);
-          g.burst({ k: "dust", x: d.x, y: d.y, n: 12, dir: 0 });
+          g.burst({ k: "shadow", x: d.x, y: d.y, n: 10, dir: 0, r: 2.1, color: 0xd02050 });
         }
       }
       break;
@@ -448,6 +473,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
         e.t = e.tw = e.atk.windup * enrage * (e.boss ? 0.88 : 1);
         e.aim = Math.atan2(dy, dx);
         e.facing = e.aim;
+        if (e.atk.perilous) sound.playSfx("peril", { at: e, volume: 0.9 });
         break;
       }
       const ranged = e.arch === "ranged" && !e.boss;
@@ -474,6 +500,9 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
     }
     case "windup":
       e.t -= dt;
+      if (e.atk.k === "charge" && Math.random() < dt * 10) {
+        g.burst({ k: "dust", x: e.x, y: e.y, n: 2, dir: e.aim + Math.PI, r: 0.45 });
+      }
       // Light attackers track the hero during the first half of the windup.
       if (e.t > e.tw * 0.5 && e.atk.k !== "charge") e.aim = e.facing = Math.atan2(dy, dx);
       if (e.t <= 0) {

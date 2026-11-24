@@ -1,0 +1,17 @@
+export const CONTROL_ROWS: [string, string][] = [
+  ["WASD", "Move · Wall shimmy"],
+  ["Mouse / ← →", "Camera"],
+  ["Click / J", "Light attack"],
+  ["Right click / K", "Heavy attack"],
+  ["F", "Weapon art"],
+  ["Space / V", "Jump · Vault · Climb"],
+  ["X / Space", "Dodge (in lock-on)"],
+  ["Q or L", "Guard · tap to parry"],
+  ["Shift", "Sprint · Wall-run"],
+  ["C / Ctrl", "Slide · Crouch · Drop"],
+  ["Tab", "Lock on"],
+  ["E", "Takedown · talk"],
+  ["R", "Stim"],
+  ["1 – 4", "Weapons"],
+  ["M · I", "Map · Quests"],
+];

@@ -130,8 +130,8 @@ export class Cape {
     this.mesh.frustumCulled = false;
   }
 
-  /** Steps the coupled multi-row cloth simulation from world position, heading, and stride. */
-  update(dt: number, at: THREE.Vector3, yaw: number, stride: number) {
+  /** Steps the coupled multi-row cloth simulation from 3D world position, heading, stride, and spine pitch. */
+  update(dt: number, at: THREE.Vector3, yaw: number, stride: number, bodyPitch = 0, bodyY = 0.95) {
     if (dt <= 0) return;
     this.time += dt;
     if (!this.started) {
@@ -140,21 +140,28 @@ export class Cape {
       this.started = true;
     }
     const dx = at.x - this.prev.x;
+    const dy = at.y - this.prev.y;
     const dz = at.z - this.prev.z;
     this.prev.copy(at);
     const turn = Math.atan2(Math.sin(yaw - this.prevYaw), Math.cos(yaw - this.prevYaw)) / dt;
     this.prevYaw = yaw;
 
-    // Velocity in the body's frame (forward = +z, right = -x for a model facing +z).
+    // Velocity in the body's frame (forward = +z, right = -x for a model facing +z, plus vertical velocity vy).
     const vx = dx / dt;
+    const vy = Math.abs(dy / dt) > 28 ? 0 : dy / dt;
     const vz = dz / dt;
     const c = Math.cos(yaw);
     const s = Math.sin(yaw);
     let fwd = vx * s + vz * c;
     let lat = vx * c - vz * s;
     if (Math.hypot(fwd, lat) > 22) fwd = lat = 0;
-    const targetSpeed = Math.hypot(fwd, lat);
+    const targetSpeed = Math.hypot(fwd, lat) + Math.abs(vy) * 0.45;
     this.speed += (targetSpeed - this.speed) * (1 - Math.exp(-dt * 10));
+
+    // Downward velocity creates upward airflow; backward torso tilt (slide/getup) offsets local drag so cloth trails backward in world space.
+    const upDraft = clamp(-vy * 0.082, -0.18, 0.9);
+    const leanComp = bodyPitch < -0.25 ? clamp(-bodyPitch - 0.12, 0, 1.35) : 0;
+    const maxDrag = 1.34 + leanComp;
 
     // Two substeps keep the coupled chain crisp and responsive at any frame rate.
     const steps = 2;
@@ -164,11 +171,15 @@ export class Cape {
     for (let step = 0; step < steps; step++) {
       for (let i = 1; i <= ROWS; i++) {
         const v = i / ROWS;
-        // Aerodynamic drag pulls cloth behind in proportion to speed & depth; turning whips the lower rows.
         const gust = Math.sin(t * 2.4 - v * 2.6) * 0.035 + Math.cos(t * 4.1 - v * 3.8) * 0.02;
-        const dragTarget = clamp(fwd * (0.145 + v * 0.065) + gust * (0.35 + v * 0.8), -0.18, 1.24);
+        const worldDrag = clamp(
+          fwd * (0.145 + v * 0.065) + Math.max(0, upDraft) * (0.35 + v * 0.62) + gust * (0.35 + v * 0.8),
+          -0.18,
+          1.32,
+        );
+        const dragTarget = clamp(worldDrag + leanComp * (0.65 + v * 0.3), -0.18, maxDrag);
         const sideTarget = clamp(lat * (0.12 + v * 0.06) - turn * (0.08 + v * 0.18), -0.92, 0.92);
-        const liftTarget = clamp(this.speed * 0.038 + Math.abs(turn) * 0.026, 0, 0.36);
+        const liftTarget = clamp(this.speed * 0.036 + Math.max(0, upDraft) * 0.24 + Math.abs(turn) * 0.026, 0, 0.46);
 
         // Coupled follow-through: each row tracks the row above it plus gravity return, giving fluid S-waves.
         const prevD = this.rowDrag[i - 1];
@@ -183,21 +194,24 @@ export class Cape {
         const aL = (prevL - this.rowLift[i]) * 44 + (liftTarget - this.rowLift[i]) * 24 - this.rowLiftV[i] * 6.8;
 
         this.rowDragV[i] += aD * h;
-        this.rowDrag[i] = clamp(this.rowDrag[i] + this.rowDragV[i] * h, v < 0.55 ? -0.05 : -0.22, 1.26);
+        this.rowDrag[i] = clamp(this.rowDrag[i] + this.rowDragV[i] * h, v < 0.55 ? -0.05 : -0.22, maxDrag);
 
         this.rowSideV[i] += aS * h;
         this.rowSide[i] = clamp(this.rowSide[i] + this.rowSideV[i] * h, -0.95, 0.95);
 
         this.rowLiftV[i] += aL * h;
-        this.rowLift[i] = clamp(this.rowLift[i] + this.rowLiftV[i] * h, 0, 0.38);
+        this.rowLift[i] = clamp(this.rowLift[i] + this.rowLiftV[i] * h, 0, 0.48);
       }
     }
 
-    // Arc-length-preserving spine integration from shoulder collar down to hem.
+    // Arc-length-preserving spine integration from shoulder collar down to hem, keeping hem above ground level.
     this.cumX[0] = 0;
     this.cumY[0] = 0;
     this.cumZ[0] = 0;
     const seg = this.segLen;
+    const cosP = Math.cos(bodyPitch);
+    const sinP = Math.sin(bodyPitch);
+    const collarH = bodyY + cosP * this.mesh.position.y - sinP * this.mesh.position.z;
     for (let i = 1; i <= ROWS; i++) {
       const pitch = this.rowDrag[i];
       const roll = this.rowSide[i];
@@ -205,9 +219,18 @@ export class Cape {
       const dirX = -Math.sin(roll);
       const dirY = -Math.cos(pitch) * Math.cos(roll * 0.65);
       const invLen = seg / Math.hypot(dirX, dirY, dirZ);
-      this.cumX[i] = this.cumX[i - 1] + dirX * invLen;
-      this.cumY[i] = this.cumY[i - 1] + dirY * invLen;
-      this.cumZ[i] = this.cumZ[i - 1] + dirZ * invLen;
+      const nx = this.cumX[i - 1] + dirX * invLen;
+      let ny = this.cumY[i - 1] + dirY * invLen;
+      let nz = this.cumZ[i - 1] + dirZ * invLen;
+      const worldRelY = collarH + cosP * ny - sinP * nz;
+      if (worldRelY < 0.08) {
+        const lift = 0.08 - worldRelY;
+        ny += lift * cosP;
+        nz -= lift * sinP;
+      }
+      this.cumX[i] = nx;
+      this.cumY[i] = ny;
+      this.cumZ[i] = nz;
     }
 
     const p = this.geo.attributes.position as THREE.BufferAttribute;

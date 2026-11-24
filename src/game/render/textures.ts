@@ -1031,30 +1031,44 @@ export function signAtlas() {
 /** A soft round dot for particles and glows. */
 export function softDot() {
   const { c, ctx } = canvas(64, 64);
-  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 29);
   g.addColorStop(0, "rgba(255,255,255,1)");
-  g.addColorStop(0.35, "rgba(255,255,255,0.6)");
+  g.addColorStop(0.35, "rgba(255,255,255,0.62)");
+  g.addColorStop(0.85, "rgba(255,255,255,0.06)");
   g.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(c);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
 }
 
-/** A ragged puff for smoke and fog banks. */
+/** A ragged puff for smoke and fog banks, strictly masked inside the canvas so quad frames never show. */
 export function smokePuff() {
   const { c, ctx } = canvas(128, 128);
   const rnd = mulberry(5);
-  for (let i = 0; i < 26; i++) {
-    const x = 40 + rnd() * 48;
-    const y = 40 + rnd() * 48;
-    const r = 16 + rnd() * 26;
+  for (let i = 0; i < 24; i++) {
+    const x = 44 + rnd() * 40;
+    const y = 44 + rnd() * 40;
+    const r = 14 + rnd() * 20;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
     g.addColorStop(0, "rgba(255,255,255,0.22)");
     g.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 128, 128);
   }
-  return new THREE.CanvasTexture(c);
+  // Radial vignette mask ensures a generous pure-zero-alpha perimeter around all four edges.
+  ctx.globalCompositeOperation = "destination-in";
+  const mask = ctx.createRadialGradient(64, 64, 18, 64, 64, 56);
+  mask.addColorStop(0, "rgba(255,255,255,1)");
+  mask.addColorStop(0.65, "rgba(255,255,255,0.65)");
+  mask.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = mask;
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.globalCompositeOperation = "source-over";
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
 }
 
 /** Diagonal hazard stripes (red/white for road-closed sawhorses or yellow/black for concrete barriers). */

@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Map as MapIcon, ScrollText } from "lucide-react";
+import { Home, Map as MapIcon, Pause, ScrollText } from "lucide-react";
 import { toast } from "sonner";
 import { ComicReader } from "@/components/comic/ComicReader";
 import { Button } from "@/components/ui/button";
+import { sound } from "@/game/audio/soundEngine";
 import { NATIONS } from "@/game/data/nations";
 import { Game } from "@/game/engine/game";
 import { Renderer } from "@/game/render/renderer";
 import { nextMission } from "@/game/save";
+import { getSettings, subscribeSettings, updateSettings } from "@/game/settings";
 import type { ComicPage, HudState, Mission, SaveData } from "@/game/types";
 import { useCoarsePointer } from "@/hooks/use-coarse-pointer";
 import { cn } from "@/lib/utils";
 import { ControlHints } from "./ControlHints";
 import { BossBar, QuestTracker, StatusPanel } from "./HudPanels";
+import { PauseMenu } from "./PauseMenu";
 import { QuestLog } from "./QuestLog";
 import { QuestOffer } from "./QuestOffer";
 import { TouchControls } from "./TouchControls";
@@ -21,6 +24,7 @@ import { WorldMap } from "./WorldMap";
 interface Props {
   save: SaveData;
   onEnding: () => void;
+  onExitTitle: () => void;
 }
 
 interface Comic {
@@ -29,21 +33,26 @@ interface Comic {
   then: () => void;
 }
 
-type Panel = "map" | "log" | null;
+type Panel = "map" | "log" | "pause" | null;
 
 /** The playable world: the 3D view, the HUD and the comic pages that tell the story. */
-export function GameScreen({ save, onEnding }: Props) {
+export function GameScreen({ save, onEnding, onExitTitle }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const gameRef = useRef<Game | null>(null);
   const comicId = useRef(0);
   const [hud, setHud] = useState<HudState | null>(null);
   const [comic, setComic] = useState<Comic | null>(null);
   const [offer, setOffer] = useState<Mission | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
+  const [pointerLocked, setPointerLocked] = useState(false);
+  const [settings, setSettings] = useState(() => getSettings());
   const [failed, setFailed] = useState(false);
   const [contextLost, setContextLost] = useState(false);
   const [, setVersion] = useState(0);
   const touch = useCoarsePointer();
+
+  useEffect(() => subscribeSettings(setSettings), []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -76,7 +85,9 @@ export function GameScreen({ save, onEnding }: Props) {
 
     // Mouse: left button light attack, right button heavy, middle lock-on; moving turns the camera.
     const canvas = renderer.canvas;
+    canvasRef.current = canvas;
     const down = (ev: PointerEvent) => {
+      sound.unlock();
       if (ev.pointerType !== "mouse" || game.paused) return;
       if (document.pointerLockElement !== canvas) {
         const lock = canvas.requestPointerLock?.() as unknown as Promise<void> | undefined;
@@ -91,14 +102,20 @@ export function GameScreen({ save, onEnding }: Props) {
       if (document.pointerLockElement === canvas || ev.buttons) game.input.look.x += ev.movementX;
     };
     const menu = (ev: Event) => ev.preventDefault();
+    const onLockChange = () => setPointerLocked(document.pointerLockElement === canvas);
+
     canvas.addEventListener("pointerdown", down);
     window.addEventListener("pointermove", moveMouse);
     canvas.addEventListener("contextmenu", menu);
+    document.addEventListener("pointerlockchange", onLockChange);
     return () => {
       canvas.removeEventListener("pointerdown", down);
       window.removeEventListener("pointermove", moveMouse);
       canvas.removeEventListener("contextmenu", menu);
+      document.removeEventListener("pointerlockchange", onLockChange);
       if (document.pointerLockElement === canvas) document.exitPointerLock();
+      canvasRef.current = null;
+      setPointerLocked(false);
       game.stop();
       renderer.dispose();
       gameRef.current = null;
@@ -111,18 +128,55 @@ export function GameScreen({ save, onEnding }: Props) {
     if (overlay || contextLost) document.exitPointerLock?.();
   }, [overlay, contextLost]);
 
-  // M opens the world map and I the quest log, as long as no story page is showing.
+  // Esc/P toggles Pause, M opens Map, I opens Quests, H toggles HUD control hints.
   const blocked = !!comic || !!offer;
+  const memoryLocked = !!hud?.memory;
   useEffect(() => {
     const onKey = (ev: KeyboardEvent) => {
       if (blocked || ev.repeat) return;
       const k = ev.key.toLowerCase();
-      if (k === "m") setPanel((p) => (p === "map" ? null : "map"));
-      else if (k === "i") setPanel((p) => (p === "log" ? null : "log"));
+      if (ev.key === "Escape") {
+        setPanel((p) => {
+          if (p === "map" || p === "log" || p === "pause") return null;
+          sound.playSfx("uiOpen", { volume: 0.75 });
+          return "pause";
+        });
+      } else if (k === "p") {
+        setPanel((p) => {
+          const next = p === "pause" ? null : "pause";
+          if (next) sound.playSfx("uiOpen", { volume: 0.75 });
+          return next;
+        });
+      } else if (k === "m" && !memoryLocked) {
+        setPanel((p) => {
+          const next = p === "map" ? null : "map";
+          if (next) sound.playSfx("uiOpen", { volume: 0.75 });
+          return next;
+        });
+      } else if (k === "i") {
+        setPanel((p) => {
+          const next = p === "log" ? null : "log";
+          if (next) sound.playSfx("uiOpen", { volume: 0.75 });
+          return next;
+        });
+      } else if (k === "h") {
+        const next = !getSettings().showHints;
+        updateSettings({ showHints: next });
+        sound.playSfx("uiClick", { volume: 0.65 });
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [blocked]);
+  }, [blocked, memoryLocked]);
+
+  const resumeGameplay = () => {
+    setPanel(null);
+    const canvas = canvasRef.current;
+    if (canvas && !touch && document.pointerLockElement !== canvas) {
+      const lock = canvas.requestPointerLock?.() as unknown as Promise<void> | undefined;
+      lock?.catch?.(() => undefined);
+    }
+  };
 
   const game = gameRef.current;
   const nation = NATIONS[save.nation];
@@ -164,20 +218,67 @@ export function GameScreen({ save, onEnding }: Props) {
 
           <div className="absolute right-2 top-2 flex flex-col items-end gap-2 sm:right-4 sm:top-4">
             <div className="pointer-events-auto flex gap-1.5">
-              <Button variant="hud" size="sm" className="whitespace-nowrap" disabled={hud.memory} onClick={() => setPanel("map")} title="City map (M)">
+              <Button
+                variant="hud"
+                size="sm"
+                className="whitespace-nowrap"
+                disabled={hud.memory}
+                onClick={() => {
+                  sound.playSfx("uiOpen", { volume: 0.75 });
+                  setPanel("map");
+                }}
+                title="City map (M)"
+              >
                 <MapIcon /> <span className="hidden md:inline">Map</span>
               </Button>
-              <Button variant="hud" size="sm" className="whitespace-nowrap" onClick={() => setPanel("log")} title="Quest log (I)">
+              <Button
+                variant="hud"
+                size="sm"
+                className="whitespace-nowrap"
+                onClick={() => {
+                  sound.playSfx("uiOpen", { volume: 0.75 });
+                  setPanel("log");
+                }}
+                title="Quest log (I)"
+              >
                 <ScrollText /> <span className="hidden md:inline">Quests</span>
               </Button>
-              <Button variant="hud" size="sm" className="whitespace-nowrap" onClick={() => game.returnToVillage()} title={hud.memory ? "Leave the memory" : "Return to the hideout"}>
+              <Button
+                variant="hud"
+                size="sm"
+                className="whitespace-nowrap"
+                onClick={() => {
+                  sound.playSfx("uiClick", { volume: 0.75 });
+                  game.returnToVillage();
+                }}
+                title={hud.memory ? "Leave the memory" : "Return to the hideout"}
+              >
                 <Home /> <span className="hidden md:inline">{hud.memory ? "Leave memory" : "Hideout"}</span>
+              </Button>
+              <Button
+                variant="hud"
+                size="sm"
+                className="whitespace-nowrap"
+                onClick={() => {
+                  sound.playSfx("uiOpen", { volume: 0.75 });
+                  setPanel("pause");
+                }}
+                title="Pause & settings (Esc / P)"
+                aria-label="Pause and settings"
+              >
+                <Pause /> <span className="hidden md:inline">Pause</span>
               </Button>
             </div>
             <div className={cn("hidden sm:block", hud.boss && "max-lg:hidden")}>
               <QuestTracker hud={hud} hint={hint} />
             </div>
           </div>
+
+          {!touch && !overlay && !contextLost && !pointerLocked && !cine && !hud.boss && (
+            <div className="pointer-events-none absolute left-1/2 top-4 hidden -translate-x-1/2 border border-border bg-background/85 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-muted-foreground lg:block">
+              Click view to lock camera · Pause (P)
+            </div>
+          )}
 
           {hud.boss && (
             <div className="absolute left-1/2 top-32 -translate-x-1/2 lg:top-5">
@@ -204,7 +305,7 @@ export function GameScreen({ save, onEnding }: Props) {
               <WeaponBar hud={hud} onWeapon={(w) => game.setWeapon(w)} />
             </div>
           ) : (
-            <ControlHints />
+            settings.showHints && <ControlHints />
           )}
         </div>
       )}
@@ -215,6 +316,7 @@ export function GameScreen({ save, onEnding }: Props) {
           busy={!!hud?.objective}
           onClose={() => setPanel(null)}
           onTravel={(id) => {
+            sound.playSfx("uiClick", { volume: 0.75 });
             setPanel(null);
             game.travel(id);
           }}
@@ -225,11 +327,29 @@ export function GameScreen({ save, onEnding }: Props) {
         <QuestLog save={save} activeId={game.active?.m.id ?? null} objective={hud?.objective?.text ?? null} onClose={() => setPanel(null)} />
       )}
 
+      {panel === "pause" && game && hud && (
+        <PauseMenu
+          save={save}
+          hud={hud}
+          onResume={resumeGameplay}
+          onReturnHideout={() => {
+            setPanel(null);
+            game.returnToVillage();
+          }}
+          onExitTitle={() => {
+            setPanel(null);
+            sound.stopGameplayAudio(0.35);
+            onExitTitle();
+          }}
+        />
+      )}
+
       {offer && game && (
         <QuestOffer
           mission={offer}
           onDecline={() => setOffer(null)}
           onAccept={() => {
+            sound.playSfx("uiClick", { volume: 0.8 });
             setOffer(null);
             game.accept(offer);
           }}

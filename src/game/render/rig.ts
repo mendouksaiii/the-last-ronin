@@ -133,6 +133,10 @@ export interface Pose {
   look: number;
   /** Breathing, 0..1. */
   breath: number;
+  /** Asymmetric parkour leg pose blend weight (0 = procedural gait, 1 = explicit legR/legL [hipPitch, kneeFlex, hipRoll]). */
+  legOv: number;
+  legR: [number, number, number];
+  legL: [number, number, number];
 }
 
 export const restPose = (): Pose => ({
@@ -153,6 +157,9 @@ export const restPose = (): Pose => ({
   sway: 0,
   look: 0,
   breath: 0,
+  legOv: 0,
+  legR: [0, 0, 0],
+  legL: [0, 0, 0],
 });
 
 // ---------- Shared geometry and materials ----------
@@ -1119,7 +1126,13 @@ function buildBeast(look: Look): Rig {
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
 export function mixPose(a: Pose, b: Partial<Pose>, k: number): Pose {
-  const out = { ...a, armR: [...a.armR] as Pose["armR"], armL: [...a.armL] as Pose["armL"] };
+  const out = {
+    ...a,
+    armR: [...a.armR] as Pose["armR"],
+    armL: [...a.armL] as Pose["armL"],
+    legR: [...a.legR] as Pose["legR"],
+    legL: [...a.legL] as Pose["legL"],
+  };
   for (const key of Object.keys(b) as (keyof Pose)[]) {
     const v = b[key];
     if (v === undefined) continue;
@@ -1145,6 +1158,13 @@ export function applyPose(rig: Rig, target: Pose, dt: number, rate = 20) {
   p.armL[2] = lerp(p.armL[2], target.armL[2], kLimb);
   p.wrist = lerp(p.wrist, target.wrist, kLimb);
   p.legs = lerp(p.legs, target.legs, kLimb);
+  p.legOv = lerp(p.legOv, target.legOv, kLimb);
+  p.legR[0] = lerp(p.legR[0], target.legR[0], kLimb);
+  p.legR[1] = lerp(p.legR[1], target.legR[1], kLimb);
+  p.legR[2] = lerp(p.legR[2], target.legR[2], kLimb);
+  p.legL[0] = lerp(p.legL[0], target.legL[0], kLimb);
+  p.legL[1] = lerp(p.legL[1], target.legL[1], kLimb);
+  p.legL[2] = lerp(p.legL[2], target.legL[2], kLimb);
   p.drop = lerp(p.drop, target.drop, kLimb);
   p.head = lerp(p.head, target.head, kLimb);
   p.gearA = lerp(p.gearA, target.gearA, kLimb);
@@ -1166,12 +1186,13 @@ export function applyPose(rig: Rig, target: Pose, dt: number, rate = 20) {
   p.phase = target.phase + rig.ph.off;
   p.spin = target.spin;
   p.roll = Math.abs(target.roll - p.roll) > 1 ? target.roll : lerp(p.roll, target.roll, kLimb);
-  for (const c of rig.capes) c.update(dt, rig.root.position, rig.root.rotation.y, Math.sin(p.phase) * p.legs);
-
   const beast = !!rig.look.beast;
   // Subtle double-frequency run bounce (peaks over mid-stance, dips on wide stride).
-  const strideBounce = beast ? 0 : (Math.abs(Math.cos(p.phase)) * 0.036 - 0.016) * p.legs;
-  rig.body.position.y = rig.hipH + p.drop + strideBounce - p.crouch * (beast ? 0.15 : 0.32);
+  const strideBounce = beast ? 0 : (Math.abs(Math.cos(p.phase)) * 0.036 - 0.016) * p.legs * (1 - p.legOv);
+  const bodyY = rig.hipH + p.drop + strideBounce - p.crouch * (beast ? 0.15 : 0.32);
+  for (const c of rig.capes) c.update(dt, rig.root.position, rig.root.rotation.y, Math.sin(p.phase) * p.legs, p.lean + p.roll, bodyY);
+
+  rig.body.position.y = bodyY;
   rig.body.position.x = p.sway;
   rig.body.rotation.set(p.roll, p.spin, p.bank);
   rig.torso.rotation.set(beast ? 0 : p.lean, beast ? 0 : p.twist, beast ? 0 : -p.sway * 1.15);
@@ -1196,22 +1217,30 @@ export function applyPose(rig: Rig, target: Pose, dt: number, rate = 20) {
   // Stride: the swing leg lifts its knee and plants heel first; the stance leg straightens and rolls to the toe.
   const a = p.legs;
   const bend = p.crouch;
-  const hipR = s * a * 0.84;
-  const hipL = -s * a * 0.84;
-  rig.legR.upper.rotation.set(hipR - bend * 1.0 - p.lean * 0.3, 0, -p.sway * 0.55);
-  rig.legL.upper.rotation.set(hipL - bend * 1.0 - p.lean * 0.3, 0, -p.sway * 0.55);
-  const kneeR = bend * 1.7 + Math.max(0, c) * a * 1.24 + a * 0.1;
-  const kneeL = bend * 1.7 + Math.max(0, -c) * a * 1.24 + a * 0.1;
-  rig.legR.lower.rotation.x = kneeR;
-  rig.legL.lower.rotation.x = kneeL;
-  // Ankles keep the feet roughly flat to the street, toes lifting through the swing.
-  rig.legR.end.rotation.x = -(hipR - bend * 1.0 + kneeR) * 0.85 + bend * 0.4 + Math.max(0, -s) * a * 0.25;
-  rig.legL.end.rotation.x = -(hipL - bend * 1.0 + kneeL) * 0.85 + bend * 0.4 + Math.max(0, s) * a * 0.25;
+  const gaitHipR = s * a * 0.84 - bend * 1.0 - p.lean * 0.3;
+  const gaitHipL = -s * a * 0.84 - bend * 1.0 - p.lean * 0.3;
+  const gaitKneeR = bend * 1.7 + Math.max(0, c) * a * 1.24 + a * 0.1;
+  const gaitKneeL = bend * 1.7 + Math.max(0, -c) * a * 1.24 + a * 0.1;
+
+  const ov = p.legOv;
+  const finHipR = lerp(gaitHipR, p.legR[0], ov);
+  const finHipL = lerp(gaitHipL, p.legL[0], ov);
+  const finKneeR = lerp(gaitKneeR, p.legR[1], ov);
+  const finKneeL = lerp(gaitKneeL, p.legL[1], ov);
+
+  rig.legR.upper.rotation.set(finHipR, 0, lerp(-p.sway * 0.55, p.legR[2], ov));
+  rig.legL.upper.rotation.set(finHipL, 0, lerp(-p.sway * 0.55, p.legL[2], ov));
+  rig.legR.lower.rotation.x = finKneeR;
+  rig.legL.lower.rotation.x = finKneeL;
+  // Ankles keep the feet roughly flat to the street when grounded; pointed slightly during aerial parkour.
+  const ankleKeep = lerp(0.85, 0.25, ov);
+  rig.legR.end.rotation.x = -(finHipR + finKneeR) * ankleKeep + bend * 0.4 * (1 - ov) + Math.max(0, -s) * a * 0.25 * (1 - ov) + ov * 0.28;
+  rig.legL.end.rotation.x = -(finHipL + finKneeL) * ankleKeep + bend * 0.4 * (1 - ov) + Math.max(0, s) * a * 0.25 * (1 - ov) + ov * 0.28;
 
   // Articulated coat hems sweep clear of striding legs.
   if (rig.coat) {
-    rig.coat.R.rotation.x = Math.min(0.18, hipR * 0.85) - a * 0.12 - bend * 0.45;
-    rig.coat.L.rotation.x = Math.min(0.18, hipL * 0.85) - a * 0.12 - bend * 0.45;
+    rig.coat.R.rotation.x = Math.min(0.18, finHipR * 0.85) - a * 0.12 - bend * 0.45;
+    rig.coat.L.rotation.x = Math.min(0.18, finHipL * 0.85) - a * 0.12 - bend * 0.45;
     rig.coat.R.rotation.z = -a * 0.08 - bend * 0.1;
     rig.coat.L.rotation.z = a * 0.08 + bend * 0.1;
     rig.coat.back.rotation.x = a * 0.28 + Math.abs(s) * a * 0.1 + Math.max(0, p.lean) * 0.3;

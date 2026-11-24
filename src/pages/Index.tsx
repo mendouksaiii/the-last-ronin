@@ -42,7 +42,18 @@ const Index = () => {
     );
   }
 
-  if (screen === "game" && save) return <GameScreen save={save} onEnding={onEnding} />;
+  if (screen === "game" && save) {
+    return (
+      <GameScreen
+        save={save}
+        onEnding={onEnding}
+        onExitTitle={() => {
+          setStored(loadSave() ?? save);
+          setScreen("title");
+        }}
+      />
+    );
+  }
 
   if (screen === "ending" && save) {
     return (

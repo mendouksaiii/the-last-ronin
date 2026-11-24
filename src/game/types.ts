@@ -91,7 +91,22 @@ export interface Mission {
 // ---------- Combat ----------
 
 /** How a move is animated on the character. */
-export type MoveAnim = "slashR" | "slashL" | "rising" | "overhead" | "thrust" | "spin" | "sweep" | "flurry" | "throw" | "draw";
+export type MoveAnim =
+  | "slashR"
+  | "slashL"
+  | "rising"
+  | "overhead"
+  | "thrust"
+  | "spin"
+  | "sweep"
+  | "flurry"
+  | "throw"
+  | "draw"
+  | "crescent"
+  | "helmSplitter"
+  | "flash"
+  | "crossCut"
+  | "cyclone";
 
 /** One attack of the hero. Distances are in metres, times in seconds. */
 export interface Move {
@@ -119,6 +134,10 @@ export interface Move {
   stun?: number;
   /** Time after the blow from which a queued attack cuts the recovery short and flows on. */
   chain?: number;
+  /** Visual intensity tier driving slash wave & trail color/scale. */
+  tier?: "light" | "finisher" | "heavy" | "special";
+  /** Roll tilt (radians) for 3D crescent slash arcs (0 = horizontal, PI/2 = vertical). */
+  arcTilt?: number;
 }
 
 export interface Weapon {

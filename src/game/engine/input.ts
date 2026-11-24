@@ -5,6 +5,8 @@ export type Action =
   | "heavy"
   | "special"
   | "dodge"
+  | "jump"
+  | "space"
   | "guard"
   | "stim"
   | "interact"
@@ -19,7 +21,9 @@ const KEY_ACTIONS: Record<string, Action> = {
   j: "light",
   k: "heavy",
   f: "special",
-  " ": "dodge",
+  " ": "space",
+  v: "jump",
+  x: "dodge",
   r: "stim",
   e: "interact",
   c: "crouch",

@@ -1,4 +1,5 @@
 import {
+  ArrowUp,
   ChevronsRight,
   Crosshair,
   EyeOff,
@@ -33,6 +34,7 @@ export const ACTION_ICONS = {
   heavy: Swords,
   special: Sparkles,
   dodge: ChevronsRight,
+  jump: ArrowUp,
   guard: Shield,
   stim: Syringe,
   crouch: EyeOff,

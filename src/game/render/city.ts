@@ -906,6 +906,52 @@ export function buildCity(zone: Zone): CityScene {
     lights.push({ pos: new THREE.Vector3(g.x - 1.5, 4, g.y + g.h / 2), color: wc.lamp, intensity: 34, distance: 18, flicker: 2, seed: 99 });
   }
 
+  // ---------- Parkour Wall Holds & Projecting Beams ----------
+  if (zone.ledges.length) {
+    const dummyL = new THREE.Object3D();
+    const holdMat = keep(new THREE.MeshStandardMaterial({ color: 0x5c6268, roughness: 0.72, metalness: 0.35, normalMap: keep(tiled(det.concrete, 2, 1)) }));
+    const beamMat = keep(new THREE.MeshStandardMaterial({ color: nation === "snow" ? 0x6a7886 : 0x6e4e34, roughness: 0.65, metalness: 0.25, normalMap: keep(tiled(det.fabric, 2, 1)) }));
+    const edgeAccentMat = keep(new THREE.MeshBasicMaterial({ color: nation === "lanterns" ? 0xe070a0 : 0xc9b8a0 }));
+    const holdList = zone.ledges.filter((l) => l.kind === "hold");
+    const beamList = zone.ledges.filter((l) => l.kind === "beam");
+
+    const emitLedgeBatch = (list: typeof zone.ledges, mat: THREE.Material) => {
+      if (!list.length) return;
+      const bodyGeo = keep(new RoundedBoxGeometry(1, 1, 1, 2, 0.04));
+      const stripGeo = keep(new THREE.BoxGeometry(1, 1, 1));
+      const inst = new THREE.InstancedMesh(bodyGeo, mat, list.length);
+      const stripInst = new THREE.InstancedMesh(stripGeo, edgeAccentMat, list.length);
+      list.forEach((l, i) => {
+        const cx = l.x + l.w * 0.5;
+        const cz = l.y + l.h * 0.5;
+        dummyL.position.set(cx, l.z - l.thickness * 0.5, cz);
+        dummyL.rotation.set(0, 0, 0);
+        dummyL.scale.set(l.w, l.thickness, l.h);
+        dummyL.updateMatrix();
+        inst.setMatrixAt(i, dummyL.matrix);
+
+        // Chalked / worn outer lip highlights the climbable edge cleanly at night.
+        dummyL.position.set(
+          cx + l.nx * Math.max(0, (Math.abs(l.nx) * l.w) * 0.5 - 0.03),
+          l.z - 0.015,
+          cz + l.ny * Math.max(0, (Math.abs(l.ny) * l.h) * 0.5 - 0.03),
+        );
+        dummyL.scale.set(l.nx === 0 ? l.w * 0.94 : 0.08, 0.035, l.ny === 0 ? l.h * 0.94 : 0.08);
+        dummyL.updateMatrix();
+        stripInst.setMatrixAt(i, dummyL.matrix);
+      });
+      inst.instanceMatrix.needsUpdate = true;
+      inst.computeBoundingSphere();
+      inst.castShadow = true;
+      inst.receiveShadow = true;
+      stripInst.instanceMatrix.needsUpdate = true;
+      stripInst.computeBoundingSphere();
+      group.add(inst, stripInst);
+    };
+    emitLedgeBatch(holdList, holdMat);
+    emitLedgeBatch(beamList, beamMat);
+  }
+
   // ---------- Props ----------
   const counts: Record<string, Prop[]> = {};
   for (const p of zone.props) (counts[p.kind] ??= []).push(p);

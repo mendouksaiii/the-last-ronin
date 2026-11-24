@@ -6,9 +6,11 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { sound } from "../audio/soundEngine";
 import { NATIONS } from "../data/nations";
 import type { Game } from "../engine/game";
 import { dist, type Enemy, type Npc, type Vec } from "../engine/state";
+import { getSettings, subscribeSettings, type GameSettings } from "../settings";
 import type { Env } from "../types";
 import { bossLook, enemyLook, enemyPose, heroLook, heroPose, npcLook, npcPose } from "./anim";
 import { buildCity, type CityScene } from "./city";
@@ -71,6 +73,37 @@ function detectSoftwareGl(gl: WebGLRenderingContext | WebGL2RenderingContext): b
   }
 }
 
+class CleanGTAOPass extends GTAOPass {
+  private hiddenVfx: THREE.Object3D[] = [];
+
+  override render(
+    renderer: THREE.WebGLRenderer,
+    writeBuffer: THREE.WebGLRenderTarget,
+    readBuffer: THREE.WebGLRenderTarget,
+    deltaTime?: number,
+    maskActive?: boolean,
+  ) {
+    this.hiddenVfx.length = 0;
+    this.scene.traverse((obj) => {
+      if (!obj.visible) return;
+      const mat = (obj as THREE.Mesh).material;
+      const isTransparent = Array.isArray(mat) ? mat.some((m) => m.transparent) : !!mat?.transparent;
+      if ((obj as THREE.Sprite).isSprite || isTransparent || obj.userData.noAo) {
+        obj.visible = false;
+        this.hiddenVfx.push(obj);
+      }
+    });
+    try {
+      super.render(renderer, writeBuffer, readBuffer, deltaTime ?? 0, maskActive ?? false);
+    } finally {
+      for (let i = 0; i < this.hiddenVfx.length; i++) {
+        this.hiddenVfx[i].visible = true;
+      }
+      this.hiddenVfx.length = 0;
+    }
+  }
+}
+
 export class Renderer {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -90,6 +123,7 @@ export class Renderer {
   private frameAvg = 1 / 60;
   private adaptT = 3;
   private rim: THREE.PointLight;
+  private heroFlash: THREE.PointLight;
   private city: CityScene | null = null;
   private effects: Effects | null = null;
   private zoneVersion = -1;
@@ -102,10 +136,17 @@ export class Renderer {
   private pickups: THREE.Group[] = [];
   private camPos = new THREE.Vector3();
   private camLook = new THREE.Vector3();
+  private heroY = 0;
   private lightT = 0;
   private time = 0;
   private hurt = 0;
   private lastHp = 0;
+  private speedFx = 0;
+  private flashAmt = 0;
+  private flashColor = new THREE.Color(1, 0.85, 0.5);
+  private stormT = 8;
+  private lightning = 0;
+  private baseMoonIntensity = 2.2;
   private resizeObs: ResizeObserver;
   private w = 1;
   private h = 1;
@@ -115,12 +156,18 @@ export class Renderer {
   private contextLost = false;
   private nearLights: { l: CityScene["lights"][number]; d: number }[] = [];
 
-  private shotGeo = new THREE.BoxGeometry(0.7, 0.04, 0.04);
-  private shotMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 0.4, 0.2), toneMapped: false });
+  private shotGeo = new THREE.BoxGeometry(0.75, 0.045, 0.045);
+  private shotMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.55, 0.2), toneMapped: false });
+  private shotPullMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.25, 1.25), toneMapped: false });
+  private shotGlowGeo = new THREE.BoxGeometry(1.35, 0.14, 0.14);
+  private shotGlowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.7, 0.2), transparent: true, opacity: 0.42, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+  private shotPullGlowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.25, 1.1), transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
   private pickupCanGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.6, 10);
   private pickupCanMat = new THREE.MeshStandardMaterial({ color: 0x2a2624, emissive: new THREE.Color(1.6, 0.5, 0.1), emissiveIntensity: 0.6, metalness: 0.5, roughness: 0.4 });
   private pickupBeamGeo = new THREE.CylinderGeometry(0.35, 0.35, 8, 12, 1, true);
   private pickupBeamMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.4, 0.45, 0.1), transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false });
+  private pickupHaloGeo = new THREE.RingGeometry(0.46, 0.66, 24);
+  private pickupHaloMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.4, 0.85, 0.22), transparent: true, opacity: 0.55, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
   private objBodyGeo = new THREE.BoxGeometry(1.3, 1.2, 1.1);
   private objBodyMat = new THREE.MeshStandardMaterial({ color: 0x3a3634, metalness: 0.6, roughness: 0.5 });
   private objStripeGeo = new THREE.BoxGeometry(1.32, 0.15, 1.12);
@@ -129,6 +176,8 @@ export class Renderer {
   private objLampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 0.2, 0.1), toneMapped: false });
   private handleContextLost: (ev: Event) => void;
   private handleContextRestored: () => void;
+  private settings: GameSettings = getSettings();
+  private unsubSettings: () => void;
 
   constructor(
     private host: HTMLElement,
@@ -183,7 +232,8 @@ export class Renderer {
     // A soft key light from the camera side and a red rim from behind keep the hero readable.
     this.fill = new THREE.PointLight(0xffe8d4, 4, 10, 2);
     this.rim = new THREE.PointLight(0xe0303a, 6, 7, 2);
-    this.scene.add(this.fill, this.rim);
+    this.heroFlash = new THREE.PointLight(0x9ad4ff, 0, 11, 2);
+    this.scene.add(this.fill, this.rim, this.heroFlash);
     this.scene.environment = this.cityEnvironment();
     this.scene.environmentIntensity = 1;
 
@@ -191,7 +241,7 @@ export class Renderer {
     this.composer.addPass(new RenderPass(this.scene, this.camera));
     if (!this.lean) {
       // Contact shadows in corners, under cars and between characters and the street.
-      this.ao = new GTAOPass(this.scene, this.camera, 512, 512);
+      this.ao = new CleanGTAOPass(this.scene, this.camera, 512, 512);
       this.ao.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.5, thickness: 1.5, scale: 1.2, samples: 12 });
       this.ao.blendIntensity = 0.85;
       this.composer.addPass(this.ao);
@@ -206,7 +256,29 @@ export class Renderer {
     this.labels = new Labels(host);
     this.resizeObs = new ResizeObserver(() => this.resize());
     this.resizeObs.observe(host);
+    this.applySettings(this.settings);
+    this.unsubSettings = subscribeSettings((next) => this.applySettings(next));
     this.resize();
+  }
+
+  private maxPixelRatio(): number {
+    const q = this.settings.graphicsQuality;
+    const cap = q === "performance" ? 1 : q === "balanced" ? 1.25 : this.lean ? 1 : 1.5;
+    return Math.min(window.devicePixelRatio, cap);
+  }
+
+  private applySettings(s: GameSettings) {
+    this.settings = s;
+    const q = s.graphicsQuality;
+    this.renderer.shadowMap.enabled = q !== "performance";
+    this.bloom.enabled = q !== "performance";
+    if (this.ao) this.ao.enabled = q === "high" && !this.lean;
+    const maxR = this.maxPixelRatio();
+    if (this.renderer.getPixelRatio() > maxR) {
+      this.renderer.setPixelRatio(maxR);
+      this.composer.setPixelRatio(maxR);
+      this.resize();
+    }
   }
 
   /** A district-tailored night sky & neon reflection dome blurred into PMREM for wet streets, glass and steel. */
@@ -271,15 +343,18 @@ export class Renderer {
       this.scene.remove(this.city.group);
       this.city.dispose();
     }
+    const nation = g.zone.id === "memory" ? "ash" : g.zone.nation;
     const precipChanged = !this.effects || this.effects.precip !== g.zone.env.precip;
     if (precipChanged) {
       if (this.effects) {
         this.scene.remove(this.effects.group);
         this.effects.dispose();
       }
-      this.effects = new Effects(g.zone.env.precip);
+      this.effects = new Effects(g.zone.env.precip, nation);
       this.effects.resize(this.h * this.renderer.getPixelRatio());
       this.scene.add(this.effects.group);
+    } else {
+      this.effects?.setNation(nation);
     }
     this.city = buildCity(g.zone);
     this.scene.add(this.city.group);
@@ -305,6 +380,7 @@ export class Renderer {
     this.hemi.color.set(env.hemiSky);
     this.hemi.groundColor.set(env.hemiGround);
     this.moon.color.set(env.moonColor);
+    this.baseMoonIntensity = env.moonIntensity;
     this.moon.intensity = env.moonIntensity;
     this.bloom.strength = env.bloom;
     this.grade.uniforms.shadowTint.value.set(...env.gradeShadow);
@@ -316,7 +392,6 @@ export class Renderer {
       lanterns: 0xff2090,
       ash: 0xff4a18,
     };
-    const nation = g.zone.id === "memory" ? "ash" : g.zone.nation;
     this.rim.color.set(rimColors[nation]);
 
     for (const v of this.enemies.values()) this.dropChar(v);
@@ -363,7 +438,7 @@ export class Renderer {
     this.adaptT -= dt;
     if (this.adaptT > 0) return;
     this.adaptT = 1.5;
-    const max = Math.min(window.devicePixelRatio, this.lean ? 1 : 1.5);
+    const max = this.maxPixelRatio();
     let ratio = this.renderer.getPixelRatio();
     if (this.frameAvg > 1 / 42 && ratio > 0.6) ratio = Math.max(0.6, ratio - 0.15);
     else if (this.frameAvg < 1 / 57 && ratio < max) ratio = Math.min(max, ratio + 0.1);
@@ -395,22 +470,97 @@ export class Renderer {
 
     const fx = this.effects;
     if (fx) {
-      for (const b of g.bursts) fx.burst(b);
+      for (const b of g.bursts) {
+        fx.burst(b);
+        if (b.k === "slash" || b.k === "parry" || b.k === "ring" || b.k === "heal" || b.k === "guardBreak" || b.k === "shadow") {
+          const strength =
+            b.k === "parry"
+              ? 8.5
+              : b.k === "heal" || b.k === "guardBreak"
+                ? 7.2
+                : (b.r ?? 1.5) > 2.2
+                  ? 7.5
+                  : 4.2;
+          const lightHex =
+            b.color !== undefined
+              ? b.color
+              : b.k === "parry"
+                ? 0xffdfb0
+                : b.k === "heal"
+                  ? 0x58f09c
+                  : b.k === "guardBreak"
+                    ? 0xffa828
+                    : b.k === "shadow"
+                      ? 0xd82050
+                      : 0x9ad4ff;
+          if (strength >= this.heroFlash.intensity * 0.7) {
+            this.heroFlash.color.set(lightHex);
+            this.heroFlash.intensity = strength;
+            this.heroFlash.position.set(b.x, (b.z ?? 0) + 1.15, b.y);
+          }
+          const screenBoost =
+            b.k === "parry"
+              ? 0.65
+              : b.k === "heal" || b.k === "guardBreak"
+                ? 0.45
+                : b.k === "slash" && (b.r ?? 1.5) > 2.2
+                  ? 0.25
+                  : 0;
+          if (screenBoost > this.flashAmt) {
+            this.flashAmt = screenBoost;
+            this.flashColor.set(lightHex);
+          }
+        }
+      }
       fx.update(simDt, this.camera.position, this.city?.emitters ?? [], this.time);
     }
     g.bursts.length = 0;
 
-    // Damage vignette and low-health pulse.
+    // Storm lightning flicker in rainy districts + damage vignette + peripheral speedlines.
+    let stormPulse = 0;
+    if (g.zone.env.precip === "rain" && !g.paused) {
+      this.stormT -= dt;
+      if (this.stormT <= 0) {
+        this.stormT = 9 + Math.random() * 11;
+        this.lightning = 1;
+        sound.playSfx("thunder", { volume: 0.72 });
+      }
+      if (this.lightning > 0) {
+        this.lightning = Math.max(0, this.lightning - dt * 3.8);
+        stormPulse = this.lightning * (0.4 + 0.6 * Math.abs(Math.sin(this.lightning * 20)));
+      }
+    }
+    this.moon.intensity = this.baseMoonIntensity + stormPulse * 3.2;
+
     const p = g.player;
     if (p.hp < this.lastHp) this.hurt = Math.min(1, this.hurt + 0.6);
     this.lastHp = p.hp;
     this.hurt = Math.max(0, this.hurt - dt * 1.4);
+    this.flashAmt = Math.max(0, this.flashAmt - dt * 2.4);
+
+    let wantSpeed = 0;
+    if (p.act.kind === "attack" && p.act.move?.anim === "flash") wantSpeed = 0.95;
+    else if (p.act.kind === "slide") wantSpeed = 0.72;
+    else if (p.act.kind === "dodge") wantSpeed = 0.62;
+    else if (p.act.kind === "wallrun") wantSpeed = 0.58;
+    else if (!p.grounded && p.vz < -7) wantSpeed = Math.min(0.8, (-p.vz - 7) / 8);
+    else if (p.speed > 7.2) wantSpeed = Math.min(0.42, (p.speed - 7.2) / 2.2);
+    this.speedFx += (wantSpeed - this.speedFx) * Math.min(1, dt * 10);
+
     const low = p.hp > 0 && p.hp / p.maxHp < 0.3 ? 0.35 + Math.sin(this.time * 5) * 0.15 : p.hp <= 0 ? 0.8 : 0;
     const u = this.grade.uniforms;
     u.time.value = this.time;
     u.hurt.value = Math.max(this.hurt, low);
     u.cine.value += ((g.cine ? 1 : 0) - u.cine.value) * Math.min(1, dt * 6);
     u.stealth.value += ((p.crouch ? 1 : 0) - u.stealth.value) * Math.min(1, dt * 4);
+    u.speedFx.value = this.speedFx;
+    if (stormPulse * 0.45 > this.flashAmt) {
+      u.flashAmt.value = stormPulse * 0.45;
+      u.flashTint.value.set(0.65, 0.84, 1.15);
+    } else {
+      u.flashAmt.value = this.flashAmt;
+      u.flashTint.value.set(this.flashColor.r, this.flashColor.g, this.flashColor.b);
+    }
 
     this.composer.render(dt);
     this.labels.update(g, this.camera, this.w, this.h, (on) => this.heightOf(on));
@@ -418,7 +568,7 @@ export class Renderer {
 
   private heightOf(on: object) {
     const g = this.game;
-    if (on === g.player) return g.player.crouch ? 1.4 : 1.9;
+    if (on === g.player) return g.player.z + (g.player.crouch || g.player.act.kind === "slide" ? 1.25 : 1.9);
     const e = on as Enemy;
     const v = this.enemies.get(e.id);
     if (v) return (v.rig.look.beast ? 0.8 : 1.85) * v.rig.look.scale;
@@ -444,8 +594,8 @@ export class Renderer {
    * Moves a character like a body with weight: the model sweeps round to its heading instead of
    * snapping, banks into turns, pitches forward as it accelerates and settles back as it stops.
    */
-  private move(v: CharView, at: Vec, facing: number, speed: number, pose: Pose, dt: number, turnRate: number) {
-    v.rig.root.position.set(at.x, 0, at.y);
+  private move(v: CharView, at: Vec, facing: number, speed: number, pose: Pose, dt: number, turnRate: number, y = 0) {
+    v.rig.root.position.set(at.x, y, at.y);
     const { yaw, turn } = easeYaw(v.rig, toYaw(facing), dt, turnRate);
     v.rig.root.rotation.y = yaw;
     if (dt > 0) {
@@ -469,12 +619,23 @@ export class Renderer {
     }
     const v = this.hero;
     const sprint = g.input.sprinting() && !p.crouch;
-    const combat = !!g.lock || p.act.kind !== "idle" || g.enemies.some((e) => e.aware && e.state !== "dead" && !e.object && dist(e, p) < 16);
+    const combat = !!g.lock || (p.act.kind !== "idle" && !["getup", "slide", "vault", "wallrun", "hang", "mantle", "ledgehop", "parkour_roll"].includes(p.act.kind)) || g.enemies.some((e) => e.aware && e.state !== "dead" && !e.object && dist(e, p) < 16);
     const reach = this.updateBlade(v.rig, combat, dt);
     const hp = heroPose(p, this.time, sprint, combat, this.stride(v, p, dt), this.blade.inHand || !v.rig.sheath, reach);
-    const turnRate = p.hp <= 0 ? 4 : p.act.kind === "dodge" ? 40 : p.act.kind === "attack" ? 28 : p.act.kind === "takedown" ? 30 : p.speed > 0.5 ? 15 : 20;
-    this.move(v, p, hp.yaw ?? p.facing, p.speed, hp.pose, dt, turnRate);
-    applyPose(v.rig, hp.pose, dt, p.hp <= 0 ? 24 : p.act.kind === "attack" ? 34 : 20);
+    const turnRate =
+      p.hp <= 0
+        ? 4
+        : p.act.kind === "dodge" || p.act.kind === "hang" || p.act.kind === "mantle" || p.act.kind === "ledgehop"
+          ? 40
+          : p.act.kind === "attack" || p.act.kind === "slide" || p.act.kind === "vault" || p.act.kind === "parkour_roll"
+            ? 30
+            : p.act.kind === "takedown"
+              ? 30
+              : p.speed > 0.5
+                ? 15
+                : 20;
+    this.move(v, p, hp.yaw ?? p.facing, p.speed, hp.pose, dt, turnRate, p.z);
+    applyPose(v.rig, hp.pose, dt, p.hp <= 0 ? 24 : p.act.kind === "attack" || p.act.kind === "ledgehop" || p.act.kind === "vault" ? 34 : 22);
     if (v.rig.tails) {
       if (p.hp <= 0) {
         v.rig.tails.rotation.x = -0.14 + Math.sin(this.time * 2) * 0.025;
@@ -499,7 +660,27 @@ export class Renderer {
       v.drops.length = 0;
     }
     v.rig.root.updateMatrixWorld(true);
-    v.trail?.update(dt, v.rig.weapon, hp.trail, p.counterT > 0 || p.act.bonus > 1 ? 0xff6a1a : 0xd8dce4);
+    const tier = p.act.move?.tier;
+    const isCounter = p.counterT > 0 || p.act.bonus > 1;
+    const edgeColor = isCounter
+      ? 0xff7828
+      : tier === "special"
+        ? 0xffd268
+        : tier === "heavy"
+          ? 0xff4638
+          : tier === "finisher"
+            ? 0xffdc7a
+            : 0xe6f2ff;
+    const auraColor = isCounter
+      ? 0xd82a10
+      : tier === "special"
+        ? 0xff3b18
+        : tier === "heavy"
+          ? 0xb81020
+          : tier === "finisher"
+            ? 0xff8a18
+            : 0x3b86e8;
+    v.trail?.update(dt, v.rig.weapon, hp.trail, edgeColor, auraColor);
   }
 
   /**
@@ -519,11 +700,13 @@ export class Renderer {
       b.inHand = true;
       b.anim = 0;
       holdWeapon(rig, true);
+      sound.playSfx("drawBlade", { volume: 0.62 });
       return 0;
     }
     if (!b.anim && want !== b.inHand && p.act.kind === "idle") {
       b.anim = 1e-4;
       b.to = want;
+      if (want) sound.playSfx("drawBlade", { volume: 0.55 });
     }
     if (!b.anim) return 0;
     b.anim += dt;
@@ -701,6 +884,9 @@ export class Renderer {
     const g = this.game;
     while (this.shots.length < g.shots.length) {
       const m = new THREE.Mesh(this.shotGeo, this.shotMat);
+      const glow = new THREE.Mesh(this.shotGlowGeo, this.shotGlowMat);
+      glow.name = "glow";
+      m.add(glow);
       this.scene.add(m);
       this.shots.push(m);
     }
@@ -709,9 +895,12 @@ export class Renderer {
       const s = g.shots[i];
       m.visible = !!s;
       if (!s) continue;
+      m.material = s.pull ? this.shotPullMat : this.shotMat;
+      const glow = m.getObjectByName("glow") as THREE.Mesh | undefined;
+      if (glow) glow.material = s.pull ? this.shotPullGlowMat : this.shotGlowMat;
       m.position.set(s.x, 1.25, s.y);
       m.rotation.y = -Math.atan2(s.vy, s.vx);
-      m.scale.set(s.pull ? 0.5 : 1, s.pull ? 3 : 1, s.pull ? 3 : 1);
+      m.scale.set(s.pull ? 0.7 : 1, s.pull ? 2.6 : 1.15, s.pull ? 2.6 : 1.15);
     }
   }
 
@@ -724,7 +913,12 @@ export class Renderer {
       can.name = "can";
       const beam = new THREE.Mesh(this.pickupBeamGeo, this.pickupBeamMat);
       beam.position.y = 4;
-      grp.add(can, beam);
+      beam.name = "beam";
+      const halo = new THREE.Mesh(this.pickupHaloGeo, this.pickupHaloMat);
+      halo.rotation.x = -Math.PI / 2;
+      halo.position.y = 0.05;
+      halo.name = "halo";
+      grp.add(can, beam, halo);
       this.scene.add(grp);
       this.pickups.push(grp);
     }
@@ -738,6 +932,11 @@ export class Renderer {
       if (can) {
         can.rotation.y = this.time * 1.5;
         can.position.y = 0.5 + Math.sin(this.time * 3 + i) * 0.08;
+      }
+      const halo = grp.getObjectByName("halo");
+      if (halo) {
+        const s = 0.85 + Math.sin(this.time * 4 + i) * 0.25;
+        halo.scale.set(s, s, 1);
       }
     }
   }
@@ -772,38 +971,48 @@ export class Renderer {
     const fz = Math.sin(yaw);
     const rx = -fz;
     const rz = fx;
-    let fov = 58;
+    this.heroY = this.first ? p.z : this.heroY + (p.z - this.heroY) * (1 - Math.exp(-dt * 12));
+    const baseY = this.heroY;
+    const baseFov = this.settings.cameraFov;
+    let fov = baseFov;
     if (g.cine) {
       // Close, low side angle on the moment, drifting slowly around it.
       const on = g.cine.on;
-      _camMid.set((p.x + on.x) * 0.5, 1.1, (p.y + on.y) * 0.5);
+      _camMid.set((p.x + on.x) * 0.5, baseY + 1.1, (p.y + on.y) * 0.5);
       const a = Math.atan2(on.y - p.y, on.x - p.x) + Math.PI / 2 + Math.sin(this.time * 0.6) * 0.25;
-      _camPosWant.set(_camMid.x + Math.cos(a) * 3.6, 1.35, _camMid.z + Math.sin(a) * 3.6);
+      _camPosWant.set(_camMid.x + Math.cos(a) * 3.6, baseY + 1.35, _camMid.z + Math.sin(a) * 3.6);
       _camLookWant.copy(_camMid);
-      fov = 42;
+      fov = Math.max(38, baseFov - 16);
     } else if (p.hp <= 0) {
-      // Lower cleanly to street height and drift around the fallen body.
+      // Lower cleanly to surface height and drift around the fallen body.
       const k = Math.min(1, p.act.t / 1.0);
       const a = yaw + Math.PI + Math.sin(this.time * 0.45) * 0.22 + k * 0.38;
-      _camTarget.set(p.x, 0.35, p.y);
-      _camPosWant.set(p.x + Math.cos(a) * 3.2, 1.25 - k * 0.15, p.y + Math.sin(a) * 3.2);
-      _camLookWant.set(p.x, 0.24, p.y);
+      _camTarget.set(p.x, baseY + 0.35, p.y);
+      _camPosWant.set(p.x + Math.cos(a) * 3.2, baseY + 1.25 - k * 0.15, p.y + Math.sin(a) * 3.2);
+      _camLookWant.set(p.x, baseY + 0.24, p.y);
       const blk = this.blocked(_camTarget, _camPosWant);
       if (blk < 1) _camPosWant.lerpVectors(_camTarget, _camPosWant, Math.max(0.3, blk));
-      fov = 48;
+      fov = Math.max(42, baseFov - 10);
     } else {
       const lock = g.lock;
-      const crouch = p.crouch ? -0.35 : 0;
-      const back = lock ? 5.4 : p.speed > 5 ? 5.0 : 4.4;
+      const parkourHang = p.act.kind === "hang" || p.act.kind === "ledgehop";
+      const crouch = p.act.kind === "slide" ? -0.62 : p.act.kind === "getup" ? -0.45 * (1 - p.act.t / Math.max(0.1, p.act.dur)) : p.crouch ? -0.35 : 0;
+      const back = lock ? 5.4 : parkourHang ? 4.8 : p.act.kind === "slide" ? 4.2 : p.speed > 5 || !p.grounded ? 5.1 : 4.4;
       const shoulder = lock ? 0.35 : 0.65;
-      _camTarget.set(p.x + rx * shoulder, 1.55 + crouch, p.y + rz * shoulder);
-      _camPosWant.set(_camTarget.x - fx * back, 2.35 + crouch, _camTarget.z - fz * back);
-      if (lock) _camLookWant.set((p.x * 2 + lock.x) / 3, 1.3, (p.y * 2 + lock.y) / 3);
-      else _camLookWant.set(_camTarget.x + fx * 4, 1.25 + crouch, _camTarget.z + fz * 4);
+      _camTarget.set(p.x + rx * shoulder, baseY + 1.55 + crouch, p.y + rz * shoulder);
+      _camPosWant.set(_camTarget.x - fx * back, baseY + (parkourHang ? 2.1 : 2.35) + crouch, _camTarget.z - fz * back);
+      if (lock) _camLookWant.set((p.x * 2 + lock.x) / 3, baseY + 1.3, (p.y * 2 + lock.y) / 3);
+      else _camLookWant.set(_camTarget.x + fx * 4, baseY + (parkourHang ? 1.85 : 1.25) + crouch, _camTarget.z + fz * 4);
       const k = this.blocked(_camTarget, _camPosWant);
       if (k < 1) _camPosWant.lerpVectors(_camTarget, _camPosWant, Math.max(0.25, k));
-      if (p.act.kind === "dodge") fov = 62;
-      else if (p.speed > 5) fov = 64;
+      if (p.act.kind === "dodge" || p.act.kind === "slide" || !p.grounded) fov = baseFov + 5;
+      else if (p.speed > 5 || p.act.kind === "wallrun") fov = baseFov + 6;
+      else if (p.act.kind === "attack" && p.act.move) {
+        const m = p.act.move;
+        if (m.tier === "special" || m.tier === "heavy" || m.tier === "finisher") {
+          fov = p.act.t < m.startup ? baseFov - 2.5 : p.act.t < m.startup + 0.16 ? baseFov + 5 : baseFov + 0.5;
+        }
+      }
     }
     const s = this.first ? 1 : 1 - Math.exp(-dt * (g.cine ? 5 : 10));
     this.first = false;
@@ -823,12 +1032,12 @@ export class Renderer {
     cam.fov += (fov - cam.fov) * Math.min(1, dt * 5);
     cam.updateProjectionMatrix();
 
-    // Lights that follow the hero.
-    this.fill.position.set(p.x - fx * 2.5 + rx * 1.2, 2.6, p.y - fz * 2.5 + rz * 1.2);
-    this.rim.position.set(p.x + fx * 1.6 - rx * 0.8, 2.1, p.y + fz * 1.6 - rz * 0.8);
+    // Lights that follow the hero at true 3D elevation.
+    this.fill.position.set(p.x - fx * 2.5 + rx * 1.2, baseY + 2.6, p.y - fz * 2.5 + rz * 1.2);
+    this.rim.position.set(p.x + fx * 1.6 - rx * 0.8, baseY + 2.1, p.y + fz * 1.6 - rz * 0.8);
     // High enough to sit above the tallest towers, so their shadows fall whole.
-    this.moon.position.set(p.x + 70, 150, p.y - 52);
-    this.moon.target.position.set(p.x, 0, p.y);
+    this.moon.position.set(p.x + 70, baseY + 150, p.y - 52);
+    this.moon.target.position.set(p.x, baseY, p.y);
   }
 
   private updateLights(dt: number) {
@@ -900,9 +1109,15 @@ export class Renderer {
       f.scale.set(1 + Math.sin(this.time * 17 + seed) * 0.15, 0.8 + Math.sin(this.time * 11 + seed) * 0.3, 1 + Math.cos(this.time * 13 + seed) * 0.15);
       f.rotation.y = this.time * 3;
     }
+    if (this.heroFlash.intensity > 0.02) {
+      this.heroFlash.intensity *= Math.exp(-dt * 18);
+    } else {
+      this.heroFlash.intensity = 0;
+    }
   }
 
   dispose() {
+    this.unsubSettings();
     this.resizeObs.disconnect();
     this.renderer.domElement.removeEventListener("webglcontextlost", this.handleContextLost);
     this.renderer.domElement.removeEventListener("webglcontextrestored", this.handleContextRestored);
@@ -920,10 +1135,16 @@ export class Renderer {
     this.pickups.length = 0;
     this.shotGeo.dispose();
     this.shotMat.dispose();
+    this.shotPullMat.dispose();
+    this.shotGlowGeo.dispose();
+    this.shotGlowMat.dispose();
+    this.shotPullGlowMat.dispose();
     this.pickupCanGeo.dispose();
     this.pickupCanMat.dispose();
     this.pickupBeamGeo.dispose();
     this.pickupBeamMat.dispose();
+    this.pickupHaloGeo.dispose();
+    this.pickupHaloMat.dispose();
     this.objBodyGeo.dispose();
     this.objBodyMat.dispose();
     this.objStripeGeo.dispose();

@@ -1,8 +1,10 @@
+import { sound } from "../audio/soundEngine";
 import { MISSIONS } from "../data/missions";
 import { NATIONS } from "../data/nations";
 import { EPILOGUE, actIntro, generalDefeat } from "../data/story";
 import { BROTHER, WEAPONS, WEAPON_ORDER } from "../data/weapons";
 import { generalsSlain, nextMission, unlockedWeapons, writeSave, xpNeed } from "../save";
+import { getSettings } from "../settings";
 import type { ComicPage, GameEvent, HudState, Mission, NationId, SaveData, Stealth, WeaponId, ZoneId } from "../types";
 import {
   MAX_STAMINA,
@@ -20,6 +22,7 @@ import {
 } from "./combat";
 import { alert, makeBoss, makeEnemy, makeObject, updateEnemies } from "./enemies";
 import { Input, type Action } from "./input";
+import { hasParkourTargetAhead, moveBody3D, tryParkourJump, trySlideOrDrop, updateVerticalPhysics } from "./parkour";
 import { dist, inRect, segHitsRect, type Active, type Bubble, type Burst, type Enemy, type Floater, type Npc, type Pickup, type Player, type Rect, type Shot, type Vec, type Zone } from "./state";
 import { buildZone } from "./world";
 
@@ -95,6 +98,20 @@ export class Game {
     this.player = {
       x: 0,
       y: 0,
+      z: 0,
+      vz: 0,
+      grounded: true,
+      airT: 0,
+      fallPeakVz: 0,
+      landT: 0,
+      landDur: 0.2,
+      landHeavy: false,
+      coyoteT: 0,
+      dropIgnoreT: 0,
+      ledge: null,
+      wallSide: 0,
+      wallNx: 0,
+      wallNy: 0,
       vx: 0,
       vy: 0,
       facing: 0,
@@ -138,6 +155,8 @@ export class Game {
   start() {
     this.input.attach();
     document.addEventListener("visibilitychange", this.handleVisibility);
+    sound.preloadGameplayAudio();
+    this.syncAudio();
     this.last = performance.now();
     const loop = (ts: number) => {
       // Real time drives the game even when frames are slow: long frames are split into
@@ -153,6 +172,7 @@ export class Game {
           left -= h;
         }
       }
+      this.syncAudio();
       if (!document.hidden) this.onFrame?.(real);
       this.raf = requestAnimationFrame(loop);
     };
@@ -161,10 +181,21 @@ export class Game {
     this.pushHud();
   }
 
+  private syncAudio() {
+    const p = this.player;
+    sound.setListener(p.x, p.y, this.camYaw);
+    sound.setDucked(this.paused || document.hidden || this.deathT > 0);
+    const bossEngaged = this.enemies.some((e) => e.boss && e.aware && e.state !== "dead");
+    const musicKey = bossEngaged ? "boss" : this.memory ? "ash" : this.save.nation;
+    sound.setMusic(musicKey);
+    sound.setAmbient(this.zone.env.precip);
+  }
+
   stop() {
     cancelAnimationFrame(this.raf);
     document.removeEventListener("visibilitychange", this.handleVisibility);
     this.input.detach();
+    sound.stopGameplayAudio(0.4);
   }
 
   act(a: Action) {
@@ -250,12 +281,27 @@ export class Game {
     const p = this.player;
     p.x = v.x + 1.5;
     p.y = v.y + 2.5;
+    p.z = 0;
+    p.vz = 0;
+    p.grounded = true;
+    p.airT = 0;
+    p.fallPeakVz = 0;
+    p.landT = 0;
+    p.landDur = 0.2;
+    p.landHeavy = false;
+    p.coyoteT = 0;
+    p.dropIgnoreT = 0;
+    p.ledge = null;
+    p.wallSide = 0;
+    p.wallNx = 0;
+    p.wallNy = 0;
     p.vx = p.vy = 0;
     p.maxHp = this.maxHp();
     p.hp = p.maxHp;
     p.stamina = MAX_STAMINA;
     p.stims = MAX_STIMS;
-    p.act = idleAct();
+    // Start crouched/prone waking off the rain-soaked asphalt (`00:00 -> 00:02`), cancelable after 0.16s.
+    p.act = { ...idleAct(), kind: "getup", dur: 0.92 };
     p.combo = 0;
     p.comboT = 0;
     p.buffer = null;
@@ -382,10 +428,14 @@ export class Game {
     p.blocking = false;
     p.parryT = 0;
     p.counterT = 0;
+    p.ledge = null;
+    p.wallSide = 0;
+    p.landT = 0;
     p.act = { ...idleAct(), kind: "broken", dur: 99 };
     this.deathT = 2.65;
     this.slow(0.45);
     this.lock = null;
+    sound.playSfx("death", { volume: 0.95 });
   }
 
   private enterStep(i: number) {
@@ -488,7 +538,10 @@ export class Game {
           if (!pk.taken && dist(p, pk) < 1.6) {
             pk.taken = true;
             a.got++;
+            sound.playSfx("pickup", { volume: 0.9 });
             this.float(pk, `${pk.label} ${a.got}/${a.need}`, "#ff8a1f");
+            this.burst({ k: "ring", x: pk.x, y: pk.y, n: 1, dir: 0, r: 2.5, color: 0xff8a1f });
+            this.burst({ k: "spark", x: pk.x, y: pk.y, n: 10, dir: 0, color: 0xffb840 });
           }
         }
         if (a.got >= a.need) this.nextStep();
@@ -734,7 +787,16 @@ export class Game {
       this.lock = next;
       if (!next) this.lockAuto = false;
     }
-    if (e.object) this.burst({ k: "shatter", x: e.x, y: e.y, n: 22, dir: 0 });
+    if (e.object) {
+      this.burst({ k: "shatter", x: e.x, y: e.y, n: 22, dir: 0 });
+    } else if (e.decoy) {
+      this.burst({ k: "shadow", x: e.x, y: e.y, n: 14, dir: 0, r: 2.2, color: 0xc02060 });
+    } else if (e.boss) {
+      this.burst({ k: "shadow", x: e.x, y: e.y, n: 24, dir: 0, r: 4.8, color: 0xff5a1f });
+      this.burst({ k: "spark", x: e.x, y: e.y, n: 18, dir: 0, color: 0xffc840 });
+    } else {
+      this.burst({ k: "shadow", x: e.x, y: e.y, n: 6, dir: 0, r: 1.5, color: 0x901428 });
+    }
     if (e.xp) this.gainXp(e.xp);
   }
 
@@ -743,7 +805,7 @@ export class Game {
   }
 
   shake(n: number) {
-    this.shakeAmt = Math.max(this.shakeAmt, n);
+    if (getSettings().screenShake) this.shakeAmt = Math.max(this.shakeAmt, n);
   }
 
   slow(t: number) {
@@ -759,6 +821,7 @@ export class Game {
     this.cinematic(2.4, e);
     this.slow(0.6);
     this.float(e, `${g.name}, ${g.title}`, "#e0102a", true);
+    sound.playSfx("bossIntro", { volume: 1.0 });
   }
 
   float(at: Vec, text: string, color: string, big = false) {
@@ -793,6 +856,9 @@ export class Game {
       this.player.maxHp = this.maxHp();
       this.player.hp = Math.min(this.player.maxHp, this.player.hp + 20);
       this.float(this.player, `Level ${s.level}`, "#ff8a1f", true);
+      sound.playSfx("levelup", { volume: 0.95 });
+      this.burst({ k: "heal", x: this.player.x, y: this.player.y, z: this.player.z, n: 22, dir: 0, r: 3.6, color: 0xffc840 });
+      this.burst({ k: "spark", x: this.player.x, y: this.player.y, z: this.player.z, n: 14, dir: 0, color: 0xffe080 });
     }
   }
 
@@ -809,6 +875,7 @@ export class Game {
     if (!this.weapons().includes(id) || p.act.kind !== "idle" || p.weapon === id) return;
     p.weapon = id;
     p.combo = 0;
+    sound.playSfx("drawBlade", { volume: 0.72 });
     if (!this.memory) {
       this.save.weapon = id;
       writeSave(this.save);
@@ -862,16 +929,52 @@ export class Game {
   private handle(action: Action) {
     const p = this.player;
     if (p.hp <= 0) return;
+    if (p.act.kind === "getup" && p.act.t > 0.14 && action !== "lock" && action !== "interact") {
+      p.act = idleAct();
+    }
     const busy = p.act.kind !== "idle";
     const attackTail = p.act.kind === "attack" && p.act.move && p.act.landed >= (p.act.move.hits ?? 1);
+    const shouldParkourSpace =
+      p.act.kind === "hang" ||
+      p.act.kind === "wallrun" ||
+      p.act.kind === "slide" ||
+      !p.grounded ||
+      p.z > 0.35 ||
+      this.input.sprinting() ||
+      (!this.lock && (hasParkourTargetAhead(this) || Math.hypot(p.vx, p.vy) > 4.2));
+
     switch (action) {
       case "light":
       case "heavy":
       case "special":
-        if (!busy) startAttack(this, action);
-        else if (canBuffer(this)) {
+        if ((!busy || (p.act.kind === "slide" && p.act.t > 0.1)) && p.grounded) {
+          if (p.act.kind === "slide") p.act = idleAct();
+          startAttack(this, action);
+        } else if (canBuffer(this)) {
           p.buffer = action;
           p.bufferT = 0.6;
+        }
+        break;
+      case "jump":
+        if (p.act.kind === "hang" || p.act.kind === "wallrun" || p.act.kind === "slide" || !busy || p.act.kind === "parkour_roll") {
+          tryParkourJump(this);
+        } else if (canBuffer(this)) {
+          p.buffer = "jump";
+          p.bufferT = 0.35;
+        }
+        break;
+      case "space":
+        if (shouldParkourSpace) {
+          if (p.act.kind === "hang" || p.act.kind === "wallrun" || p.act.kind === "slide" || !busy || p.act.kind === "parkour_roll") {
+            tryParkourJump(this);
+          } else if (canBuffer(this)) {
+            p.buffer = "jump";
+            p.bufferT = 0.35;
+          }
+        } else if (!busy || attackTail) startDodge(this);
+        else if (canBuffer(this)) {
+          p.buffer = "dodge";
+          p.bufferT = 0.35;
         }
         break;
       case "dodge":
@@ -888,7 +991,7 @@ export class Game {
         drinkStim(this);
         break;
       case "crouch":
-        p.crouch = !p.crouch;
+        trySlideOrDrop(this);
         break;
       case "lock":
         this.toggleLock();
@@ -925,10 +1028,11 @@ export class Game {
       const b = p.buffer;
       p.buffer = null;
       if (b === "dodge") startDodge(this);
+      else if (b === "jump") tryParkourJump(this);
       else startAttack(this, b);
     }
 
-    p.blocking = free && p.act.kind === "idle" && inp.guarding();
+    p.blocking = free && p.grounded && p.act.kind === "idle" && inp.guarding();
     const want = this.moveInput();
     const mag = Math.hypot(want.x, want.y);
     // A lock taken by attacking lets go when the hero sprints off or stops fighting for a while.
@@ -939,23 +1043,37 @@ export class Game {
     const sprint = !p.crouch && !p.blocking && inp.sprinting() && p.stamina > 1 && !this.lock;
     let speed = p.blocking ? 2.6 : p.crouch ? 3.3 : sprint ? 8.8 : 6;
     if (this.lock && !sprint) speed = Math.min(speed, 4.8);
-    const tvx = free ? want.x * speed : 0;
-    const tvy = free ? want.y * speed : 0;
-    // Heavy body: velocity eases smoothly towards the wish, crisper when braking.
-    const k = 1 - Math.exp(-dt * (mag > 0.1 ? 10.5 : 13.5));
-    p.vx += (tvx - p.vx) * k;
-    p.vy += (tvy - p.vy) * k;
+    const keepParkourMom = p.act.kind === "slide" || p.act.kind === "vault" || p.act.kind === "wallrun" || p.act.kind === "ledgehop" || p.act.kind === "parkour_roll" || p.act.kind === "hang";
     if (free) {
+      const tvx = want.x * speed;
+      const tvy = want.y * speed;
+      // Grounded inertia vs softer mid-air steering.
+      const k = 1 - Math.exp(-dt * (p.grounded ? (mag > 0.1 ? 10.5 : 13.5) : 3.2));
+      p.vx += (tvx - p.vx) * k;
+      p.vy += (tvy - p.vy) * k;
       const before = { x: p.x, y: p.y };
-      this.moveBody(p, p.vx * dt, p.vy * dt, PLAYER_R);
+      const prevWalk = p.walk;
+      moveBody3D(this, p, p.vx * dt, p.vy * dt, PLAYER_R, p.z);
       const moved = dist(before, p);
-      p.walk += moved;
-      p.speed = moved / dt;
-    } else {
+      if (p.grounded) p.walk += moved;
+      p.speed = moved / Math.max(1e-4, dt);
+      if (p.grounded && p.speed > 2.2 && Math.floor(prevWalk / 1.15) < Math.floor(p.walk / 1.15)) {
+        const wet = this.zone.env.precip === "rain";
+        sound.playSfx(wet ? "stepWet" : "stepDry", { volume: p.crouch ? 0.34 : sprint ? 0.72 : 0.52 });
+        if (p.speed > 3.6) {
+          if (wet) {
+            this.burst({ k: "ripple", x: p.x, y: p.y, z: p.z, n: sprint ? 3 : 1, dir: p.facing + Math.PI, r: sprint ? 0.62 : 0.44 });
+          } else if (sprint && p.speed > 6.8) {
+            this.burst({ k: "dust", x: p.x, y: p.y, z: p.z, n: 2, dir: p.facing + Math.PI, r: 0.4 });
+          }
+        }
+      }
+    } else if (!keepParkourMom) {
       p.speed = 0;
       p.vx = p.vy = 0;
     }
-    if (sprint && p.speed > 4.5) {
+    updateVerticalPhysics(this, dt, want);
+    if (sprint && p.grounded && p.speed > 4.5) {
       p.stamina -= 14 * dt;
       p.staminaT = this.time + 0.5;
       if (p.crouch) p.crouch = false;
@@ -984,7 +1102,7 @@ export class Game {
   private updateCamera(dt: number) {
     const inp = this.input;
     const k = inp.keys;
-    this.camYaw += inp.look.x * 0.004;
+    this.camYaw += inp.look.x * 0.004 * getSettings().mouseSensitivity;
     inp.look.x = 0;
     inp.look.y = 0;
     const turn = (k.has("arrowright") ? 1 : 0) - (k.has("arrowleft") ? 1 : 0);
@@ -1102,16 +1220,20 @@ export class Game {
       s.life -= dt;
       if (this.solids.some((r) => inRect(s, r))) {
         s.life = 0;
-        this.burst({ k: "spark", x: s.x, y: s.y, n: 3, dir: Math.atan2(-s.vy, -s.vx) });
+        this.burst({ k: "spark", x: s.x, y: s.y, n: 5, dir: Math.atan2(-s.vy, -s.vx), color: s.pull ? 0xff2880 : 0xff7028 });
+        this.burst({ k: "ring", x: s.x, y: s.y, z: 1.0, n: 1, dir: 0, r: 0.85, color: s.pull ? 0xff2880 : 0xff7028 });
         continue;
       }
-      if (dist(s, p) < PLAYER_R + s.r) {
+      if (dist(s, p) < PLAYER_R + s.r && p.z < 2.2 && !(p.act.kind === "slide" && p.act.t < 0.38)) {
         s.life = 0;
+        this.burst({ k: "spark", x: s.x, y: s.y, z: p.z, n: 6, dir: Math.atan2(-s.vy, -s.vx), color: s.pull ? 0xff2880 : 0xff7028 });
+        this.burst({ k: "ring", x: s.x, y: s.y, z: p.z + 1.0, n: 1, dir: 0, r: 1.05, color: s.pull ? 0xff2880 : 0xff7028 });
         const before = p.hp;
         hurtPlayer(this, s.dmg, { x: s.sx, y: s.sy }, false, null);
         if (s.pull && p.hp < before && p.hp > 0) this.moveBody(p, (s.sx - p.x) * 0.6, (s.sy - p.y) * 0.6, PLAYER_R);
       } else if (friend && friend.hp > 0 && dist(s, friend) < 0.5 + s.r) {
         s.life = 0;
+        this.burst({ k: "spark", x: s.x, y: s.y, n: 5, dir: Math.atan2(-s.vy, -s.vx), color: s.pull ? 0xff2880 : 0xff7028 });
         friend.hp -= s.dmg * 0.6;
       }
     }

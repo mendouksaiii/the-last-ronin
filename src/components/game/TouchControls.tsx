@@ -107,6 +107,9 @@ export function TouchControls({ game, hud }: { game: Game; hud: HudState }) {
       <Pad label="Dodge" onDown={() => act("dodge")} className="bottom-6 right-32 size-14">
         <I.dodge className="size-6" />
       </Pad>
+      <Pad label="Jump and climb" onDown={() => act("jump")} className="bottom-6 right-52 size-12">
+        <I.jump className="size-5" />
+      </Pad>
       <Pad
         label="Guard and parry"
         onDown={() => {

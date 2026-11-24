@@ -1,22 +1,6 @@
 import { useState } from "react";
 import { Keyboard, X } from "lucide-react";
-
-const ROWS: [string, string][] = [
-  ["WASD", "Move"],
-  ["Mouse / ← →", "Camera"],
-  ["Click / J", "Light attack"],
-  ["Right click / K", "Heavy attack"],
-  ["F", "Weapon art"],
-  ["Space", "Dodge"],
-  ["Q or L", "Guard · tap to parry"],
-  ["Shift", "Sprint"],
-  ["C", "Crouch · stealth"],
-  ["Tab", "Lock on"],
-  ["E", "Takedown · talk"],
-  ["R", "Stim"],
-  ["1 – 4", "Weapons"],
-  ["M · I", "Map · Quests"],
-];
+import { CONTROL_ROWS } from "@/game/data/controls";
 
 /** Collapsible keyboard and mouse reference for desktop play. */
 export function ControlHints() {
@@ -32,7 +16,7 @@ export function ControlHints() {
             </button>
           </div>
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
-            {ROWS.map(([k, v]) => (
+            {CONTROL_ROWS.map(([k, v]) => (
               <div key={k} className="contents">
                 <dt className="font-bold text-accent">{k}</dt>
                 <dd className="text-foreground/80">{v}</dd>

@@ -37,6 +37,20 @@ export interface Prop extends Vec {
   text?: string;
 }
 
+export interface Ledge {
+  x: number;
+  y: number;
+  /** Top elevation of the ledge or beam above ground (metres). */
+  z: number;
+  w: number;
+  h: number;
+  thickness: number;
+  /** Outward wall normal facing into open air. */
+  nx: number;
+  ny: number;
+  kind: "hold" | "beam";
+}
+
 export interface Zone {
   id: ZoneId;
   nation: NationId;
@@ -48,6 +62,8 @@ export interface Zone {
   walls: Rect[];
   /** Small solids such as cars and barriers. */
   cover: Rect[];
+  /** Climbable wall handholds and narrow projecting beams. */
+  ledges: Ledge[];
   gate: Rect | null;
   fortress: Rect | null;
   /** The general's hall inside the fortress; bosses stay within it. */
@@ -59,7 +75,23 @@ export interface Zone {
   beast?: Archetype;
 }
 
-export type ActKind = "idle" | "attack" | "dodge" | "block" | "hurt" | "broken" | "takedown" | "stim";
+export type ActKind =
+  | "idle"
+  | "attack"
+  | "dodge"
+  | "block"
+  | "hurt"
+  | "broken"
+  | "takedown"
+  | "stim"
+  | "getup"
+  | "slide"
+  | "vault"
+  | "wallrun"
+  | "hang"
+  | "mantle"
+  | "ledgehop"
+  | "parkour_roll";
 
 export interface PlayerAct {
   kind: ActKind;
@@ -74,7 +106,37 @@ export interface PlayerAct {
   target: Enemy | null;
 }
 
+export interface HangLedge {
+  x: number;
+  y: number;
+  z: number;
+  nx: number;
+  ny: number;
+  minT: number;
+  maxT: number;
+  t: number;
+  topZ: number;
+  isRoof: boolean;
+  onBeam?: boolean;
+}
+
 export interface Player extends Vec {
+  /** Elevation above the street in metres and vertical velocity. */
+  z: number;
+  vz: number;
+  grounded: boolean;
+  airT: number;
+  fallPeakVz: number;
+  /** Impact landing crouch absorption timer. */
+  landT: number;
+  landDur: number;
+  landHeavy: boolean;
+  coyoteT: number;
+  dropIgnoreT: number;
+  ledge: HangLedge | null;
+  wallSide: -1 | 0 | 1;
+  wallNx: number;
+  wallNy: number;
   facing: number;
   /** Current velocity, eased towards the desired one so movement has weight. */
   vx: number;
@@ -89,7 +151,7 @@ export interface Player extends Vec {
   combo: number;
   comboT: number;
   /** Buffered press, executed when the current action ends. */
-  buffer: "light" | "heavy" | "special" | "dodge" | null;
+  buffer: "light" | "heavy" | "special" | "dodge" | "jump" | null;
   bufferT: number;
   specialCd: number;
   stims: number;
@@ -196,11 +258,28 @@ export interface Pickup extends Vec {
 
 /** One-shot effects the renderer turns into particles. */
 export interface Burst extends Vec {
-  k: "blood" | "spark" | "parry" | "dust" | "shatter" | "ring";
+  k:
+    | "blood"
+    | "spark"
+    | "parry"
+    | "dust"
+    | "slide"
+    | "slash"
+    | "shatter"
+    | "ring"
+    | "heal"
+    | "guardBreak"
+    | "ripple"
+    | "shadow";
   n: number;
   /** Direction the spray flies, in radians. */
   dir: number;
   r?: number;
+  /** Surface elevation above street level (metres). */
+  z?: number;
+  /** Optional slash arc roll tilt (radians) & hex tint. */
+  tilt?: number;
+  color?: number;
 }
 
 export interface Floater extends Vec {
