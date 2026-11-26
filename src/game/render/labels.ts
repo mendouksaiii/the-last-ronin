@@ -190,6 +190,13 @@ export class Labels {
       if (item.ghost !== b.ghost) {
         item.ghost = b.ghost;
         item.el.classList.toggle("italic", b.ghost);
+        item.el.classList.toggle("bg-paper", !b.ghost);
+        item.el.classList.toggle("text-ink", !b.ghost);
+        item.el.classList.toggle("border-ink", !b.ghost);
+        item.el.classList.toggle("bg-ink/90", b.ghost);
+        item.el.classList.toggle("text-paper", b.ghost);
+        item.el.classList.toggle("border-accent", b.ghost);
+        item.el.classList.toggle("shadow-glow", b.ghost);
       }
       at(item, Math.max(120, Math.min(w - 120, this.pt.x)), Math.max(60, this.pt.y));
     }

@@ -1,7 +1,41 @@
-import { sound } from "../audio/soundEngine";
+import { sound, type SfxKey } from "../audio/soundEngine";
 import { MISSIONS } from "../data/missions";
 import { NATIONS } from "../data/nations";
+import {
+  BIWA_AMBIENT_LINES,
+  BOSS_HIT_TAUNTS,
+  BOSS_MASK_DECOY_LINE,
+  BOSS_PHASE2_LINES,
+  ENEMY_BRUTE_LINES,
+  ENEMY_GIVEUP_LINES,
+  ENEMY_PANIC_LINES,
+  ENEMY_SEARCH_LINES,
+  FIXER_AMBIENT_LINES,
+  GHOST_LOW_HP_LINES,
+  GHOST_PARRY_LINES,
+  GHOST_STEALTH_LINES,
+  GHOST_WANDER_LINES,
+  GHOST_WEAPON_LINES,
+  NPC_LIBERATED_LINES,
+  NPC_VILLAGER_DISTRICT,
+  NPC_VILLAGER_GENERAL,
+  REN_BATTLE_WON_LINES,
+  REN_BOSS_LINES,
+  REN_EXPLORE_LINES,
+  REN_HEAL_LINES,
+  REN_IDLE_LINES,
+  REN_KILL_LINES,
+  REN_LOW_HP_LINES,
+  REN_PARRY_BOSS_LINES,
+  REN_SPOT_ENEMY_LINES,
+  REN_STEALTH_KILL_LINES,
+  REN_WEAPON_LINES,
+  type GhostExchange,
+  pickItem,
+  pickOther,
+} from "../data/reactiveDialogue";
 import { EPILOGUE, actIntro, generalDefeat } from "../data/story";
+import { lookupVoiceLine } from "../data/voiceManifest";
 import { BROTHER, WEAPONS, WEAPON_ORDER } from "../data/weapons";
 import { generalsSlain, nextMission, unlockedWeapons, writeSave, xpNeed } from "../save";
 import { getSettings } from "../settings";
@@ -89,6 +123,30 @@ export class Game {
   private slowT = 0;
   private deathT = 0;
   private campT: number[] = [];
+  private stillT = 0;
+  private nextIdleAt = 6;
+  private exploreT = 0;
+  private nextExploreAt = 11;
+  private ambientCd = 1.5;
+  private renVoiceCd = 1;
+  private spotCryCd = 0;
+  private lowHpCd = 0;
+  private weaponSwapCd = 0;
+  private npcVoiceCd = 6;
+  private ghostCd = 10;
+  private bossTauntCd = 0;
+  private enemyChatterCd = 4;
+  private cityAmbSfxCd = 16;
+  private enragedBossId = -1;
+  private ghostWanderT = 0;
+  private nextGhostWanderAt = 24;
+  private stealthWhisperT = 0;
+  private fightT = 0;
+  private wasHunted = false;
+  private lastRenLine = "";
+  private lastNpcLine = "";
+  private lastNpcSpeaker: Npc | null = null;
+  private pendingLines: { t: number; line: string; on: Vec; priority: "mission" | "ambient"; waitVoice?: boolean }[] = [];
 
   constructor(
     readonly save: SaveData,
@@ -258,14 +316,27 @@ export class Game {
     this.bursts = [];
     this.floaters = [];
     this.lock = null;
+    this.pendingLines = [];
+    this.stillT = 0;
+    this.nextIdleAt = 6 + Math.random() * 2;
+    this.exploreT = 0;
+    this.nextExploreAt = 10 + Math.random() * 5;
+    this.fightT = 0;
+    this.wasHunted = false;
+    this.enragedBossId = -1;
+    this.ghostWanderT = 0;
+    this.nextGhostWanderAt = 22 + Math.random() * 10;
+    this.stealthWhisperT = 0;
+    this.npcVoiceCd = 5 + Math.random() * 4;
     this.respawn();
     if (id === "memory") return;
     const v = this.zone.pois.village;
     this.npcs.push(
       makeNpc(NATIONS[nation].giver, "giver", v.x - 2, v.y - 2),
       makeNpc("The Biwa Woman", "biwa", v.x + 5, v.y - 2.5, "biwa"),
-      makeNpc("Survivor", "villager", v.x - 5, v.y + 3),
-      makeNpc("Survivor", "villager", v.x + 3, v.y + 5),
+      makeNpc("Watchman", "villager", v.x - 5, v.y + 3),
+      makeNpc("Townswoman", "villager", v.x + 3, v.y + 5),
+      makeNpc("Lookout", "villager", v.x + 7, v.y + 1),
     );
     this.campT = this.zone.camps.map(() => 0);
     this.zone.camps.forEach((_, i) => this.spawnCamp(i));
@@ -324,6 +395,10 @@ export class Game {
     this.hitstop = 0;
     this.cine = null;
     this.shakeAmt = 0;
+    this.pendingLines = [];
+    this.stillT = 0;
+    this.fightT = 0;
+    this.wasHunted = false;
   }
 
   private spawnCamp(i: number) {
@@ -375,6 +450,7 @@ export class Game {
       this.hero = m.playAs ?? "katana";
       this.loadZone("memory");
       this.player.weapon = this.hero;
+      sound.playSfx("biwaSting", { volume: 0.9 });
     }
     this.active = { m, i: 0, got: 0, need: 1, wave: 0, waveT: 0, started: false, friend: null, ambush: 0 };
     this.enterStep(0);
@@ -406,6 +482,7 @@ export class Game {
   private restart(title: string, text: string) {
     this.toast(title, text);
     const a = this.active;
+    this.enragedBossId = -1;
     this.clearMission();
     // Camps forget the hero and return to their rounds.
     for (const e of this.enemies) {
@@ -436,6 +513,7 @@ export class Game {
     this.slow(0.45);
     this.lock = null;
     sound.playSfx("death", { volume: 0.95 });
+    sound.playSfx("effortDeath", { volume: 0.9 });
   }
 
   private enterStep(i: number) {
@@ -795,6 +873,22 @@ export class Game {
       this.burst({ k: "shadow", x: e.x, y: e.y, n: 24, dir: 0, r: 4.8, color: 0xff5a1f });
       this.burst({ k: "spark", x: e.x, y: e.y, n: 18, dir: 0, color: 0xffc840 });
     } else {
+      if (by !== "takedown" && Math.random() < 0.65) sound.playSfx("enemyDie", { at: e, volume: 0.78 });
+      if (!this.memory) {
+        if (by === "takedown" && Math.random() < 0.85) {
+          this.renAmbient(pickOther(REN_STEALTH_KILL_LINES, this.lastRenLine), 0.3, 4.5);
+        } else if (Math.random() < 0.6) {
+          this.renAmbient(pickOther(REN_KILL_LINES, this.lastRenLine), 0.2, 4.5);
+        }
+        const allies = this.enemies.filter((o) => o !== e && o.aware && !o.boss && !o.decoy && !o.object && o.state !== "dead" && dist(this.player, o) < 20);
+        if ((allies.length === 1 || allies.length === 2) && this.time >= this.enemyChatterCd && Math.random() < 0.5) {
+          const ally = allies[0];
+          const line = pickItem(ENEMY_PANIC_LINES);
+          if (this.say(`${ally.name}: ${line}`, ally, { priority: "ambient" })) {
+            this.enemyChatterCd = this.time + 12;
+          }
+        }
+      }
       this.burst({ k: "shadow", x: e.x, y: e.y, n: 6, dir: 0, r: 1.5, color: 0x901428 });
     }
     if (e.xp) this.gainXp(e.xp);
@@ -822,18 +916,156 @@ export class Game {
     this.slow(0.6);
     this.float(e, `${g.name}, ${g.title}`, "#e0102a", true);
     sound.playSfx("bossIntro", { volume: 1.0 });
+    const taunt: Record<NationId, SfxKey> = {
+      reeds: "bossTauntOx",
+      snow: "bossTauntBell",
+      tides: "bossTauntTide",
+      lanterns: "bossTauntMask",
+      ash: "bossTauntGenryu",
+    };
+    sound.playSfx(taunt[this.zone.nation], { volume: 0.98 });
+    this.pendingLines.push({
+      t: 2.35,
+      line: `Ren: ${REN_BOSS_LINES[this.zone.nation]}`,
+      on: this.player,
+      priority: "mission",
+    });
   }
 
   float(at: Vec, text: string, color: string, big = false) {
     this.floaters.push({ x: at.x + (Math.random() - 0.5) * 0.6, y: at.y, text, t: 0, color, big });
   }
 
-  say(line: string, on: Vec) {
+  say(line: string, on: Vec, opts?: { priority?: "mission" | "ambient"; reply?: boolean }): boolean {
+    const priority = opts?.priority ?? "mission";
+    if (priority === "ambient") {
+      if (
+        sound.isVoicePlaying() ||
+        this.deathT > 0 ||
+        this.cine ||
+        (!opts?.reply && (this.time < this.ambientCd || this.bubbles.some((b) => b.on === on)))
+      ) {
+        return false;
+      }
+      this.ambientCd = this.time + 2.5;
+    }
     const idx = line.indexOf(": ");
     const speaker = idx > 0 ? line.slice(0, idx) : "";
     const text = idx > 0 ? line.slice(idx + 2) : line;
+    const ghost = /voice/i.test(speaker);
     this.bubbles = this.bubbles.filter((b) => b.on !== on);
-    this.bubbles.push({ speaker, text, t: 3 + text.length * 0.045, ghost: /voice/i.test(speaker), on });
+    this.bubbles.push({ speaker, text, t: 3 + text.length * 0.045, ghost, on });
+    if (ghost) sound.playSfx("ghostChime", { volume: 0.45 });
+    const voiceUrl = lookupVoiceLine(speaker || "Narrator", text) ?? lookupVoiceLine("Enemy", text);
+    if (voiceUrl) {
+      sound.playVoice(voiceUrl, ghost ? { volume: 0.95 } : { volume: 0.95, at: on });
+    }
+    return true;
+  }
+
+  private ghostExchange(ex: GhostExchange): boolean {
+    if (this.memory || this.cine || this.player.hp <= 0 || this.time < this.ghostCd) return false;
+    if (!this.say(`${ex.speaker}: ${ex.text}`, this.player, { priority: "ambient" })) return false;
+    this.ghostCd = this.time + 18;
+    this.renVoiceCd = Math.max(this.renVoiceCd, this.time + 6);
+    if (ex.reply) {
+      this.lastRenLine = ex.reply;
+      this.pendingLines.push({ t: 0.35, line: `Ren: ${ex.reply}`, on: this.player, priority: "ambient", waitVoice: true });
+    }
+    return true;
+  }
+
+  private renAmbient(text: string, delay = 0, cooldown = 5.5) {
+    if (this.memory || !text || this.player.hp <= 0) return;
+    if (this.time < this.renVoiceCd && delay === 0) return;
+    if (delay > 0) {
+      if (this.pendingLines.some((q) => q.on === this.player)) return;
+      this.pendingLines.push({ t: delay, line: `Ren: ${text}`, on: this.player, priority: "ambient" });
+      this.lastRenLine = text;
+      this.renVoiceCd = this.time + cooldown;
+      return;
+    }
+    if (this.say(`Ren: ${text}`, this.player, { priority: "ambient" })) {
+      this.lastRenLine = text;
+      this.renVoiceCd = this.time + cooldown;
+    }
+  }
+
+  onEnemyAlerted(e: Enemy) {
+    if (this.memory || this.time < this.spotCryCd || dist(this.player, e) > 22) return;
+    this.spotCryCd = this.time + 9;
+    this.renAmbient(pickOther(REN_SPOT_ENEMY_LINES, this.lastRenLine), 0.35, 4.5);
+  }
+
+  onPerfectParry(attacker: Enemy | null) {
+    if (this.memory || this.cine || this.player.hp <= 0) return;
+    if (attacker?.boss && Math.random() < 0.72) {
+      this.renAmbient(pickOther(REN_PARRY_BOSS_LINES, this.lastRenLine), 0.15, 4.5);
+      return;
+    }
+    if (this.time >= this.ghostCd && Math.random() < 0.55) {
+      this.ghostExchange(pickItem(GHOST_PARRY_LINES));
+    }
+  }
+
+  onPlayerHurt(_taken: number, attacker?: Enemy | null) {
+    const p = this.player;
+    if (this.memory || p.hp <= 0) return;
+    if (attacker?.boss && _taken >= 20 && this.time >= this.bossTauntCd && !sound.isVoicePlaying()) {
+      const t = BOSS_HIT_TAUNTS[this.zone.nation];
+      if (this.say(`${t.speaker}: ${t.text}`, attacker, { priority: "ambient" })) {
+        this.bossTauntCd = this.time + 11;
+        return;
+      }
+    }
+    if (p.hp > p.maxHp * 0.38 || this.time < this.lowHpCd) return;
+    this.lowHpCd = this.time + 16;
+    if (this.time >= this.ghostCd && Math.random() < 0.5 && this.ghostExchange(pickItem(GHOST_LOW_HP_LINES))) {
+      return;
+    }
+    this.renAmbient(pickOther(REN_LOW_HP_LINES, this.lastRenLine), 0.25, 5);
+  }
+
+  onBossEnrage(boss: Enemy) {
+    if (this.enragedBossId === boss.id) return;
+    this.enragedBossId = boss.id;
+    const p2 = BOSS_PHASE2_LINES[this.zone.nation];
+    this.float(boss, p2.speaker, "#ff4030", true);
+    this.say(`${p2.speaker}: ${p2.text}`, boss, { priority: "mission" });
+    this.pendingLines.push({ t: 0.4, line: `Ren: ${p2.reply}`, on: this.player, priority: "mission", waitVoice: true });
+  }
+
+  onBossDecoys(boss: Enemy) {
+    if (this.time < this.bossTauntCd || sound.isVoicePlaying()) return;
+    if (this.say(`The Mask: ${BOSS_MASK_DECOY_LINE}`, boss, { priority: "ambient" })) {
+      this.bossTauntCd = this.time + 10;
+    }
+  }
+
+  onEnemySearch(e: Enemy) {
+    if (this.memory || this.cine || sound.isVoicePlaying() || this.time < this.enemyChatterCd || dist(this.player, e) > 22) return;
+    if (this.say(`${e.name}: ${pickItem(ENEMY_SEARCH_LINES)}`, e, { priority: "ambient" })) {
+      this.enemyChatterCd = this.time + 11;
+    }
+  }
+
+  onEnemyGiveUp(e: Enemy) {
+    if (this.memory || this.cine || sound.isVoicePlaying() || this.time < this.enemyChatterCd || dist(this.player, e) > 22) return;
+    if (this.say(`${e.name}: ${pickItem(ENEMY_GIVEUP_LINES)}`, e, { priority: "ambient" })) {
+      this.enemyChatterCd = this.time + 11;
+    }
+  }
+
+  onEnemyBruteCry(e: Enemy) {
+    if (this.memory || this.cine || sound.isVoicePlaying() || this.time < this.enemyChatterCd || dist(this.player, e) > 22) return;
+    if (this.say(`${e.name}: ${pickItem(ENEMY_BRUTE_LINES)}`, e, { priority: "ambient" })) {
+      this.enemyChatterCd = this.time + 10;
+    }
+  }
+
+  onStimHealed() {
+    if (this.memory || Math.random() > 0.9) return;
+    this.renAmbient(pickOther(REN_HEAL_LINES, this.lastRenLine), 0.15, 5);
   }
 
   private toast(title: string, text?: string) {
@@ -879,6 +1111,14 @@ export class Game {
     if (!this.memory) {
       this.save.weapon = id;
       writeSave(this.save);
+      if (this.time >= this.weaponSwapCd && Math.random() < 0.85) {
+        this.weaponSwapCd = this.time + 8;
+        const ghostPool = GHOST_WEAPON_LINES[id];
+        if (ghostPool && this.time >= this.ghostCd && Math.random() < 0.55 && this.ghostExchange(pickItem(ghostPool))) {
+          return;
+        }
+        this.renAmbient(pickOther(REN_WEAPON_LINES[id], this.lastRenLine), 0.2, 4.5);
+      }
     }
   }
 
@@ -1155,6 +1395,11 @@ export class Game {
         const damp = Math.exp(-dt * 6);
         n.vx = (n.vx ?? 0) * damp;
         n.vy = (n.vy ?? 0) * damp;
+        if (dist(n, p) < 4.5) {
+          const want = Math.atan2(p.y - n.y, p.x - n.x);
+          const diff = Math.atan2(Math.sin(want - n.facing), Math.cos(want - n.facing));
+          n.facing += diff * (1 - Math.exp(-dt * 4));
+        }
         if ((n.pauseT ?? 0) <= 0) n.goal = this.spot(n.home, 1.5, 4.8);
         continue;
       }
@@ -1188,6 +1433,7 @@ export class Game {
     }
 
     this.updateMission(dt);
+    this.updateLivingDialogue(dt);
 
     for (const f of this.floaters) f.t += dt;
     this.floaters = this.floaters.filter((f) => f.t < 1.1);
@@ -1240,6 +1486,139 @@ export class Game {
     this.shots = this.shots.filter((s) => s.life > 0);
   }
 
+  private npcCommentLine(n: Npc): string {
+    const nation = this.save.nation;
+    if (n.role === "biwa") return pickOther(BIWA_AMBIENT_LINES, this.lastNpcLine);
+    if (n.role === "giver") return FIXER_AMBIENT_LINES[nation];
+    const roleName = (n.name === "Watchman" || n.name === "Townswoman" || n.name === "Lookout" ? n.name : "Watchman") as
+      | "Watchman"
+      | "Townswoman"
+      | "Lookout";
+    const liberated = this.save.done.includes(`${nation}-7`);
+    const pool = [
+      ...NPC_VILLAGER_GENERAL[roleName],
+      ...(liberated ? NPC_LIBERATED_LINES[nation] : NPC_VILLAGER_DISTRICT[nation]),
+    ];
+    return pickOther(pool, this.lastNpcLine);
+  }
+
+  private updateLivingDialogue(dt: number) {
+    const p = this.player;
+    if (p.hp <= 0) return;
+
+    const ready: typeof this.pendingLines = [];
+    const keep: typeof this.pendingLines = [];
+    for (const item of this.pendingLines) {
+      if (item.waitVoice && sound.isVoicePlaying()) {
+        keep.push(item);
+        continue;
+      }
+      item.t -= dt;
+      if (item.t <= 0) ready.push(item);
+      else keep.push(item);
+    }
+    this.pendingLines = keep;
+    for (const item of ready) this.say(item.line, item.on, { priority: item.priority, reply: item.waitVoice });
+
+    const hunted = this.enemies.some((e) => e.aware && e.state !== "dead" && !e.object && dist(e, p) < 25);
+    if (hunted) {
+      this.fightT += dt;
+      this.stillT = 0;
+      this.wasHunted = true;
+    } else if (this.wasHunted) {
+      this.wasHunted = false;
+      if (!this.memory && this.fightT > 1.5 && Math.random() < 0.9) {
+        this.renAmbient(pickOther(REN_BATTLE_WON_LINES, this.lastRenLine), 0.85, 5.5);
+      }
+      this.fightT = 0;
+    }
+
+    if (this.memory || this.cine) return;
+
+    // Distant 3D city atmosphere cues (crows & night gusts) while moving through the districts.
+    if (!hunted && this.time >= this.cityAmbSfxCd) {
+      this.cityAmbSfxCd = this.time + 20 + Math.random() * 14;
+      const a = Math.random() * Math.PI * 2;
+      const r = 18 + Math.random() * 14;
+      const at = { x: p.x + Math.cos(a) * r, y: p.y + Math.sin(a) * r };
+      sound.playSfx(Math.random() < 0.55 ? "crowCaw" : "nightWind", { at, volume: 0.48, jitter: 0.08 });
+    }
+
+    // Fallen brother stealth whispers when crouching near unaware foes.
+    if (!hunted && p.crouch && this.time >= this.ghostCd && !sound.isVoicePlaying()) {
+      const nearFoe = this.enemies.some((e) => !e.object && e.state !== "dead" && dist(p, e) < 15);
+      if (nearFoe) {
+        this.stealthWhisperT += dt;
+        if (this.stealthWhisperT >= 2.2) {
+          this.stealthWhisperT = 0;
+          this.ghostExchange(pickItem(GHOST_STEALTH_LINES));
+        }
+      } else {
+        this.stealthWhisperT = 0;
+      }
+    } else {
+      this.stealthWhisperT = 0;
+    }
+
+    // When Ren spots unaware enemies ahead while advancing (not crouched in stealth), bark a challenge.
+    if (!hunted && !p.crouch && p.speed > 2.2 && this.time >= this.spotCryCd && this.time >= this.renVoiceCd) {
+      const seenFoe = this.enemies.find(
+        (e) => !e.object && !e.boss && !e.decoy && e.state !== "dead" && dist(p, e) < 13 && this.lineOfSight(p, e, false),
+      );
+      if (seenFoe) {
+        this.spotCryCd = this.time + 9;
+        this.renAmbient(pickOther(REN_SPOT_ENEMY_LINES, this.lastRenLine), 0, 5);
+      }
+    }
+
+    // Self-aware idle restlessness when the player leaves Ren standing still too long.
+    if (!hunted && p.speed < 0.35 && p.act.kind === "idle" && p.grounded && !p.blocking) {
+      this.stillT += dt;
+      if (this.stillT >= this.nextIdleAt) {
+        this.renAmbient(pickOther(REN_IDLE_LINES, this.lastRenLine), 0, 6);
+        this.stillT = 0;
+        this.nextIdleAt = 10 + Math.random() * 5;
+      }
+    } else if (p.speed > 0.75 || p.act.kind !== "idle") {
+      this.stillT = 0;
+      this.nextIdleAt = 6 + Math.random() * 2.5;
+    }
+
+    // District reflections & fallen brother memories while traversing out of combat.
+    if (!hunted && p.speed > 1.5 && dist(p, this.zone.pois.village) > 9) {
+      this.exploreT += dt;
+      this.ghostWanderT += dt;
+      if (this.ghostWanderT >= this.nextGhostWanderAt && this.time >= this.ghostCd && !sound.isVoicePlaying()) {
+        this.ghostWanderT = 0;
+        this.nextGhostWanderAt = 26 + Math.random() * 14;
+        this.ghostExchange(pickItem(GHOST_WANDER_LINES));
+      } else if (this.exploreT >= this.nextExploreAt) {
+        this.exploreT = 0;
+        this.nextExploreAt = 14 + Math.random() * 8;
+        this.renAmbient(pickOther(REN_EXPLORE_LINES[this.zone.nation], this.lastRenLine), 0, 6.5);
+      }
+    }
+
+    // Random ambient NPC remarks around the hideout.
+    if (!hunted && this.time >= this.npcVoiceCd && this.time >= this.ambientCd && !sound.isVoicePlaying()) {
+      const nearby = this.npcs.filter(
+        (n) => (n.role === "villager" || n.role === "biwa" || n.role === "giver") && dist(p, n) < 10.5,
+      );
+      if (nearby.length) {
+        const locals = nearby.filter((n) => n.role === "villager" || n.role === "biwa");
+        const candidates = locals.length ? locals : nearby;
+        const fresh = candidates.filter((n) => n !== this.lastNpcSpeaker);
+        const pick = (fresh.length ? fresh : candidates)[Math.floor(Math.random() * (fresh.length ? fresh.length : candidates.length))];
+        const line = this.npcCommentLine(pick);
+        if (this.say(`${pick.name}: ${line}`, pick, { priority: "ambient" })) {
+          this.lastNpcLine = line;
+          this.lastNpcSpeaker = pick;
+          this.npcVoiceCd = this.time + 15 + Math.random() * 9;
+        }
+      }
+    }
+  }
+
   private updatePrompt() {
     this.prompt = null;
     const fin = finisherTarget(this);
@@ -1257,8 +1636,24 @@ export class Game {
         else {
           this.prompt = { text: `Talk to ${n.name}`, run: () => this.say(`${n.name}: ${NATIONS[nation].name} is free. Go well, ronin.`, n) };
         }
+        return;
       } else if (n.role === "biwa") {
         this.prompt = { text: "Listen to the Biwa Woman", run: () => this.comic(actIntro(nation), () => undefined) };
+        return;
+      }
+    }
+    if (!this.active) {
+      const villager = this.npcs.find((n) => n.role === "villager" && dist(this.player, n) < 2.6);
+      if (villager) {
+        this.prompt = {
+          text: `Talk to ${villager.name}`,
+          run: () => {
+            const line = this.npcCommentLine(villager);
+            this.lastNpcLine = line;
+            this.lastNpcSpeaker = villager;
+            this.say(`${villager.name}: ${line}`, villager);
+          },
+        };
       }
     }
   }

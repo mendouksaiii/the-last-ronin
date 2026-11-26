@@ -34,7 +34,33 @@ export type SfxKey =
   | "levelup"
   | "thunder"
   | "uiClick"
-  | "uiOpen";
+  | "uiOpen"
+  | "effortLight"
+  | "effortHeavy"
+  | "effortSpecial"
+  | "effortDodge"
+  | "effortHurt"
+  | "effortDeath"
+  | "enemyAlert"
+  | "enemyDie"
+  | "bossTauntOx"
+  | "bossTauntBell"
+  | "bossTauntTide"
+  | "bossTauntMask"
+  | "bossTauntGenryu"
+  | "kusariSwing"
+  | "kusariSnare"
+  | "nunchakuSnap"
+  | "boWhoosh"
+  | "boSlam"
+  | "katanaFlash"
+  | "bellToll"
+  | "biwaSting"
+  | "ghostChime"
+  | "parryRing"
+  | "finisherSlash"
+  | "crowCaw"
+  | "nightWind";
 
 export interface PlaySfxOpts {
   volume?: number;
@@ -103,6 +129,43 @@ const SFX_URLS: Record<SfxKey, readonly string[]> = {
   thunder: ["/assets/audio/thunder.mp3"],
   uiClick: ["/assets/audio/ui-click.mp3"],
   uiOpen: ["/assets/audio/ui-open.mp3"],
+  effortLight: [
+    "/assets/audio/vo-effort-light-1.mp3",
+    "/assets/audio/vo-effort-light-2.mp3",
+    "/assets/audio/vo-effort-light-3.mp3",
+  ],
+  effortHeavy: [
+    "/assets/audio/vo-effort-heavy-1.mp3",
+    "/assets/audio/vo-effort-heavy-2.mp3",
+  ],
+  effortSpecial: ["/assets/audio/vo-effort-special.mp3"],
+  effortDodge: ["/assets/audio/vo-effort-dodge.mp3"],
+  effortHurt: ["/assets/audio/vo-effort-hurt-1.mp3", "/assets/audio/vo-effort-hurt-2.mp3"],
+  effortDeath: ["/assets/audio/vo-effort-death.mp3"],
+  enemyAlert: [
+    "/assets/audio/vo-enemy-alert-1.mp3",
+    "/assets/audio/vo-enemy-alert-2.mp3",
+    "/assets/audio/vo-enemy-alert-3.mp3",
+  ],
+  enemyDie: ["/assets/audio/vo-enemy-die-1.mp3", "/assets/audio/vo-enemy-die-2.mp3"],
+  bossTauntOx: ["/assets/audio/vo-boss-ox.mp3"],
+  bossTauntBell: ["/assets/audio/vo-boss-bell.mp3"],
+  bossTauntTide: ["/assets/audio/vo-boss-tide.mp3"],
+  bossTauntMask: ["/assets/audio/vo-boss-mask.mp3"],
+  bossTauntGenryu: ["/assets/audio/vo-boss-genryu.mp3"],
+  kusariSwing: ["/assets/audio/sfx-kusari-swing.mp3"],
+  kusariSnare: ["/assets/audio/sfx-kusari-snare.mp3"],
+  nunchakuSnap: ["/assets/audio/sfx-nunchaku-snap.mp3"],
+  boWhoosh: ["/assets/audio/sfx-bo-whoosh.mp3"],
+  boSlam: ["/assets/audio/sfx-bo-slam.mp3"],
+  katanaFlash: ["/assets/audio/sfx-katana-flash.mp3"],
+  bellToll: ["/assets/audio/sfx-bell-toll.mp3"],
+  biwaSting: ["/assets/audio/sfx-biwa-sting.mp3"],
+  ghostChime: ["/assets/audio/sfx-ghost-chime.mp3"],
+  parryRing: ["/assets/audio/sfx-parry-ring.mp3"],
+  finisherSlash: ["/assets/audio/sfx-finisher-slash.mp3"],
+  crowCaw: ["/assets/audio/sfx-crow-caw.mp3"],
+  nightWind: ["/assets/audio/sfx-night-wind.mp3"],
 };
 
 const SFX_COOLDOWN_MS: Partial<Record<SfxKey, number>> = {
@@ -116,6 +179,21 @@ const SFX_COOLDOWN_MS: Partial<Record<SfxKey, number>> = {
   bowShot: 90,
   thunder: 2500,
   uiClick: 40,
+  effortLight: 450,
+  effortHeavy: 500,
+  effortSpecial: 1200,
+  effortDodge: 750,
+  effortHurt: 400,
+  enemyAlert: 2600,
+  enemyDie: 550,
+  nunchakuSnap: 90,
+  kusariSwing: 120,
+  boWhoosh: 120,
+  ghostChime: 4000,
+  parryRing: 150,
+  finisherSlash: 350,
+  crowCaw: 12000,
+  nightWind: 12000,
 };
 
 const PRELOAD_KEYS: SfxKey[] = [
@@ -144,6 +222,18 @@ const PRELOAD_KEYS: SfxKey[] = [
   "hurt",
   "uiClick",
   "uiOpen",
+  "effortLight",
+  "effortHeavy",
+  "effortDodge",
+  "effortHurt",
+  "enemyAlert",
+  "kusariSwing",
+  "nunchakuSnap",
+  "boWhoosh",
+  "katanaFlash",
+  "parryRing",
+  "finisherSlash",
+  "ghostChime",
 ];
 
 interface ActiveLoop {
@@ -162,6 +252,7 @@ class SoundEngine {
   private musicBus: GainNode | null = null;
   private ambBus: GainNode | null = null;
   private sfxBus: GainNode | null = null;
+  private voiceBus: GainNode | null = null;
 
   private buffers = new Map<string, AudioBuffer>();
   private loading = new Map<string, Promise<AudioBuffer | null>>();
@@ -174,7 +265,12 @@ class SoundEngine {
   private ambTarget: AmbientKey = "none";
   private ambReqId = 0;
 
+  private activeVoice: { src: AudioBufferSourceNode; gain: GainNode } | null = null;
+  private voiceLoading = false;
+  private voiceReqId = 0;
+
   private duck = 1;
+  private voiceDuck = 1;
   private listenerX = 0;
   private listenerY = 0;
   private listenerYaw = 0;
@@ -207,10 +303,12 @@ class SoundEngine {
       const music = ctx.createGain();
       const amb = ctx.createGain();
       const sfx = ctx.createGain();
+      const voice = ctx.createGain();
 
       music.connect(master);
       amb.connect(master);
       sfx.connect(master);
+      voice.connect(master);
       master.connect(ctx.destination);
 
       this.ctx = ctx;
@@ -218,6 +316,7 @@ class SoundEngine {
       this.musicBus = music;
       this.ambBus = amb;
       this.sfxBus = sfx;
+      this.voiceBus = voice;
 
       this.syncBusVolumes(0.02);
       this.bindUnlock();
@@ -248,14 +347,16 @@ class SoundEngine {
 
   private syncBusVolumes(tau = 0.06) {
     const ctx = this.ctx;
-    if (!ctx || !this.masterGain || !this.musicBus || !this.ambBus || !this.sfxBus) return;
+    if (!ctx || !this.masterGain || !this.musicBus || !this.ambBus || !this.sfxBus || !this.voiceBus) return;
     const now = ctx.currentTime;
     const s = this.settings;
     const master = s.muted ? 0 : s.masterVol;
+    const duckFactor = this.duck * this.voiceDuck;
     this.masterGain.gain.setTargetAtTime(master, now, tau);
-    this.musicBus.gain.setTargetAtTime(s.musicVol * this.duck, now, tau);
-    this.ambBus.gain.setTargetAtTime(s.ambVol * (0.65 + 0.35 * this.duck), now, tau);
+    this.musicBus.gain.setTargetAtTime(s.musicVol * duckFactor, now, tau);
+    this.ambBus.gain.setTargetAtTime(s.ambVol * (0.65 + 0.35 * duckFactor), now, tau);
     this.sfxBus.gain.setTargetAtTime(s.sfxVol, now, tau);
+    this.voiceBus.gain.setTargetAtTime(s.voiceVol, now, tau);
   }
 
   setDucked(ducked: boolean) {
@@ -263,6 +364,13 @@ class SoundEngine {
     if (this.duck === target) return;
     this.duck = target;
     this.syncBusVolumes(0.14);
+  }
+
+  private setVoiceDuck(ducked: boolean) {
+    const target = ducked ? 0.52 : 1;
+    if (this.voiceDuck === target) return;
+    this.voiceDuck = target;
+    this.syncBusVolumes(0.12);
   }
 
   setListener(x: number, y: number, camYaw: number) {
@@ -453,7 +561,114 @@ class SoundEngine {
     });
   }
 
+  isVoicePlaying(): boolean {
+    return this.voiceLoading || this.activeVoice !== null;
+  }
+
+  stopVoice() {
+    this.voiceReqId++;
+    this.voiceLoading = false;
+    const cur = this.activeVoice;
+    this.activeVoice = null;
+    this.setVoiceDuck(false);
+    if (!cur) return;
+    try {
+      cur.src.onended = null;
+      cur.src.stop();
+      cur.src.disconnect();
+      cur.gain.disconnect();
+    } catch {
+      // Ignore already-stopped nodes.
+    }
+  }
+
+  playVoice(
+    url: string,
+    opts?: { volume?: number; at?: { x: number; y: number }; onEnd?: () => void },
+  ) {
+    if (typeof window === "undefined") {
+      opts?.onEnd?.();
+      return;
+    }
+    this.stopVoice();
+    if (this.settings.muted || this.settings.masterVol <= 0.005 || this.settings.voiceVol <= 0.005) {
+      opts?.onEnd?.();
+      return;
+    }
+
+    let distGain = 1;
+    let pan = 0;
+    if (opts?.at) {
+      const dx = opts.at.x - this.listenerX;
+      const dy = opts.at.y - this.listenerY;
+      const d = Math.hypot(dx, dy);
+      if (d > 48) {
+        opts?.onEnd?.();
+        return;
+      }
+      distGain = d <= 4 ? 1 : Math.max(0.25, 1 - (d - 4) / 44);
+      const rx = -Math.sin(this.listenerYaw);
+      const ry = Math.cos(this.listenerYaw);
+      pan = Math.max(-0.75, Math.min(0.75, (dx * rx + dy * ry) / Math.max(4, d)));
+    }
+
+    const ctx = this.ensureContext();
+    if (!ctx || !this.voiceBus) {
+      opts?.onEnd?.();
+      return;
+    }
+    const req = ++this.voiceReqId;
+    this.voiceLoading = true;
+    void this.loadBuffer(url).then((buf) => {
+      if (req !== this.voiceReqId) return;
+      this.voiceLoading = false;
+      if (!buf || !this.ctx || !this.voiceBus) {
+        opts?.onEnd?.();
+        return;
+      }
+      if (this.ctx.state === "suspended") void this.ctx.resume().catch(() => undefined);
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      const g = this.ctx.createGain();
+      g.gain.value = (opts?.volume ?? 1) * distGain;
+
+      if (Math.abs(pan) > 0.03 && typeof this.ctx.createStereoPanner === "function") {
+        const panner = this.ctx.createStereoPanner();
+        panner.pan.value = pan;
+        src.connect(g);
+        g.connect(panner);
+        panner.connect(this.voiceBus);
+      } else {
+        src.connect(g);
+        g.connect(this.voiceBus);
+      }
+
+      this.activeVoice = { src, gain: g };
+      this.setVoiceDuck(true);
+      src.onended = () => {
+        if (this.activeVoice?.src === src) {
+          this.activeVoice = null;
+          this.setVoiceDuck(false);
+        }
+        try {
+          src.disconnect();
+          g.disconnect();
+        } catch {
+          // Ignore cleanup errors.
+        }
+        if (req === this.voiceReqId) opts?.onEnd?.();
+      };
+      src.start(0);
+    });
+  }
+
+  preloadVoice(url: string) {
+    if (typeof window !== "undefined") void this.loadBuffer(url);
+  }
+
   stopGameplayAudio(fadeSec = 0.45) {
+    this.stopVoice();
     this.setMusic("none", fadeSec);
     this.setAmbient("none", fadeSec);
     this.setDucked(false);

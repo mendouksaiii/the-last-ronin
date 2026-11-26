@@ -1,8 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ComicReader } from "@/components/comic/ComicReader";
 import { EndingScreen } from "@/components/game/EndingScreen";
 import { GameScreen } from "@/components/game/GameScreen";
 import { TitleScreen } from "@/components/game/TitleScreen";
+import { sound } from "@/game/audio/soundEngine";
 import { PROLOGUE } from "@/game/data/story";
 import { clearSave, loadSave, newSave, writeSave } from "@/game/save";
 import type { SaveData } from "@/game/types";
@@ -13,6 +14,15 @@ const Index = () => {
   const [screen, setScreen] = useState<Screen>("title");
   const [stored, setStored] = useState<SaveData | null>(() => loadSave());
   const [save, setSave] = useState<SaveData | null>(null);
+
+  useEffect(() => {
+    if (screen !== "prologue") return;
+    sound.unlock();
+    sound.setMusic("title", 0.8);
+    return () => {
+      sound.setMusic("none", 0.45);
+    };
+  }, [screen]);
 
   const play = (data: SaveData) => {
     setSave(data);

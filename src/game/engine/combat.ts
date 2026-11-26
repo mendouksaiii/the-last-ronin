@@ -100,6 +100,9 @@ export function startAttack(g: Game, kind: "light" | "heavy" | "special") {
     bonus: counter ? (p.weapon === "katana" ? 3 : 2) : 1,
     target,
   };
+  if (kind === "special") sound.playSfx("effortSpecial", { volume: 0.9 });
+  else if (kind === "heavy") sound.playSfx("effortHeavy", { volume: 0.82 });
+  else if (move.tier === "finisher" || Math.random() < 0.45) sound.playSfx("effortLight", { volume: 0.72 });
   if (counter) g.float(p, "Counter", "#ff5a1f", true);
 }
 
@@ -111,6 +114,7 @@ export function startDodge(g: Game) {
   p.act = { ...idleAct(), kind: "dodge", dur: DODGE.dur, dir };
   p.combo = 0;
   sound.playSfx("dodge", { volume: 0.85, jitter: 0.08 });
+  if (Math.random() < 0.55) sound.playSfx("effortDodge", { volume: 0.72 });
   g.burst({ k: "ripple", x: p.x, y: p.y, z: p.z, n: 4, dir: dir + Math.PI, r: 0.9 });
   g.burst({ k: "dust", x: p.x, y: p.y, z: p.z, n: 4, dir: dir + Math.PI, r: 0.65 });
 }
@@ -175,6 +179,7 @@ function landFinisher(g: Game) {
   const execute = p.act.bonus === 2;
   const ang = Math.atan2(e.y - p.y, e.x - p.x);
   sound.playSfx("finisher", { volume: 1.0 });
+  sound.playSfx("finisherSlash", { volume: 0.92 });
   sound.playSfx("hitHeavy", { volume: 0.9, at: e });
   g.burst({ k: "slash", x: p.x, y: p.y, z: p.z, n: 12, dir: ang, r: 2.35, tilt: 0.62, color: execute ? 0xffc850 : 0xff3b28 });
   g.burst({ k: "slash", x: p.x, y: p.y, z: p.z, n: 10, dir: ang, r: 2.1, tilt: -0.62, color: 0xe01830 });
@@ -231,9 +236,27 @@ function land(g: Game) {
   // Emit glowing 3D crescent slash waves & wind sparks on blade release.
   const isFlurry = (move.hits ?? 1) > 2;
   if (!isFlurry || a.landed % 2 === 0) {
-    if (move.tier === "special") sound.playSfx("swingSpecial", { volume: 0.95 });
-    else if (move.tier === "heavy" || move.dmg >= 1.5) sound.playSfx("swingHeavy", { volume: 0.88 });
-    else sound.playSfx("swingLight", { volume: 0.82 });
+    if (move.tier === "special") {
+      if (p.weapon === "katana") sound.playSfx("katanaFlash", { volume: 0.96 });
+      else if (p.weapon === "bo") sound.playSfx("boSlam", { volume: 0.98 });
+      else if (p.weapon === "kusari") {
+        sound.playSfx("kusariSwing", { volume: 0.9 });
+        sound.playSfx("kusariSnare", { volume: 0.88 });
+      } else {
+        sound.playSfx("nunchakuSnap", { volume: 0.9 });
+        sound.playSfx("swingSpecial", { volume: 0.85 });
+      }
+    } else if (move.tier === "heavy" || move.dmg >= 1.5) {
+      if (p.weapon === "bo") sound.playSfx("boWhoosh", { volume: 0.92, rate: 0.92 });
+      else if (p.weapon === "kusari") sound.playSfx(move.pull ? "kusariSnare" : "kusariSwing", { volume: 0.92 });
+      else if (p.weapon === "nunchaku") sound.playSfx("nunchakuSnap", { volume: 0.9 });
+      else sound.playSfx("swingHeavy", { volume: 0.88 });
+    } else {
+      if (p.weapon === "bo") sound.playSfx("boWhoosh", { volume: 0.84, rate: 1.12 });
+      else if (p.weapon === "kusari") sound.playSfx("kusariSwing", { volume: 0.86 });
+      else if (p.weapon === "nunchaku") sound.playSfx("nunchakuSnap", { volume: 0.86 });
+      else sound.playSfx("swingLight", { volume: 0.82 });
+    }
     const tiltBase = move.arcTilt ?? 0.25;
     const tilt = a.landed % 2 === 1 ? -tiltBase : tiltBase;
     const waveR =
@@ -384,11 +407,13 @@ export function hurtPlayer(g: Game, dmg: number, from: Vec | null, perilous: boo
     p.counterT = COUNTER_WINDOW;
     p.stamina = Math.min(MAX_STAMINA, p.stamina + 12);
     sound.playSfx("parry", { volume: 1.0, jitter: 0.05 });
+    sound.playSfx("parryRing", { volume: 0.88, jitter: 0.04 });
     g.burst({ k: "parry", x: p.x + Math.cos(p.facing) * 0.6, y: p.y + Math.sin(p.facing) * 0.6, z: p.z, n: 16, dir: p.facing });
     g.hitstop = 0.12;
     g.slow(0.3);
     g.shake(0.15);
     g.float(p, "Parry", "#ff5a1f", true);
+    g.onPerfectParry(attacker);
     if (attacker && !attacker.object) {
       attacker.poise += attacker.maxPoise * (attacker.boss ? 0.3 : 0.6);
       if (attacker.poise >= attacker.maxPoise) {
@@ -440,6 +465,7 @@ export function hurtPlayer(g: Game, dmg: number, from: Vec | null, perilous: boo
   p.ledge = null;
   p.wallSide = 0;
   sound.playSfx("hurt", { volume: taken > 25 ? 1.0 : 0.82 });
+  sound.playSfx("effortHurt", { volume: taken > 25 ? 0.92 : 0.72 });
   g.float(p, `-${taken}`, "#e0102a");
   g.burst({ k: "blood", x: p.x, y: p.y, z: p.z, n: 12, dir: from ? Math.atan2(p.y - from.y, p.x - from.x) : 0 });
   g.shake(taken > 25 ? 0.45 : 0.25);
@@ -447,6 +473,7 @@ export function hurtPlayer(g: Game, dmg: number, from: Vec | null, perilous: boo
   if (p.act.kind !== "broken") p.act = { ...idleAct(), kind: "hurt", dur: taken > 25 ? 0.9 : 0.45 };
   if (from) push(g, from, taken > 25 ? 1.6 : 0.7);
   if (p.hp <= 0) g.die();
+  else g.onPlayerHurt(taken, attacker);
 }
 
 function push(g: Game, from: Vec, d: number) {
@@ -509,6 +536,7 @@ export function updateAct(g: Game, dt: number): boolean {
         p.hp = Math.min(p.maxHp, p.hp + heal);
         g.float(p, `+${heal}`, "#8fbf8f");
         g.burst({ k: "heal", x: p.x, y: p.y, z: p.z, n: 16, dir: 0, r: 2.2 });
+        g.onStimHealed();
       }
       if (a.t >= a.dur) p.act = idleAct();
       return false;

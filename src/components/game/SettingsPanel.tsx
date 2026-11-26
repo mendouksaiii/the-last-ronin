@@ -106,6 +106,16 @@ export function SettingsPanel() {
           onChange={(musicVol) => updateSettings({ musicVol })}
         />
         <SliderRow
+          label="Dialogue & voices"
+          valueText={pct(settings.voiceVol)}
+          value={settings.voiceVol}
+          min={0}
+          max={1}
+          step={0.02}
+          disabled={settings.muted}
+          onChange={(voiceVol) => updateSettings({ voiceVol })}
+        />
+        <SliderRow
           label="Combat & world SFX"
           valueText={pct(settings.sfxVol)}
           value={settings.sfxVol}

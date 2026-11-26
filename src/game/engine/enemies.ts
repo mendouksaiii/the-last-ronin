@@ -181,6 +181,8 @@ export function alert(g: Game, e: Enemy, at: Vec) {
   }
   if (!was) {
     g.float(e, "!", "#e0102a", true);
+    if (!e.boss && !e.beast) sound.playSfx("enemyAlert", { at: e, volume: 0.85 });
+    if (!e.boss && !e.decoy) g.onEnemyAlerted(e);
     for (const o of g.enemies) {
       if (o !== e && !o.aware && !o.object && o.state !== "dead" && dist(o, e) < 13) {
         o.suspicion = Math.max(o.suspicion, 0.8);
@@ -216,6 +218,7 @@ function resolve(g: Game, e: Enemy) {
     }
     case "slam": {
       const r = spec.r ?? 2.6;
+      if (e.boss && g.zone.nation === "snow") sound.playSfx("bellToll", { at: e, volume: 0.98 });
       sound.playSfx("hitHeavy", { at: e, volume: 0.92 });
       g.hitFriends(e, (p, pr) => dist(p, e) < r + pr, dmg, perilous);
       g.burst({ k: "ring", x: e.x, y: e.y, n: 1, dir: 0, r, color: perilous ? 0xff4a18 : 0xe0303a });
@@ -286,6 +289,7 @@ function resolve(g: Game, e: Enemy) {
           g.burst({ k: "shadow", x: d.x, y: d.y, n: 10, dir: 0, r: 2.1, color: 0xd02050 });
         }
       }
+      g.onBossDecoys(e);
       break;
     }
     case "guard":
@@ -397,7 +401,10 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
       e.suspicion += dt * (0.6 + close * 2.6) * (p.crouch ? 0.6 : 1);
       e.lastSeen = { x: p.x, y: p.y };
       if (e.suspicion >= 1) alert(g, e, p);
-      else if (e.suspicion > 0.35 && e.state !== "search") e.state = "search";
+      else if (e.suspicion > 0.35 && e.state !== "search") {
+        e.state = "search";
+        g.onEnemySearch(e);
+      }
     } else {
       e.suspicion = Math.max(0, e.suspicion - dt * 0.12);
     }
@@ -437,6 +444,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
         if (e.t > 6 && e.suspicion < 0.25) {
           e.state = e.patrol.length ? "patrol" : "idle";
           e.t = 0;
+          g.onEnemyGiveUp(e);
         }
       }
       break;
@@ -465,6 +473,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
         e.atk = e.boss.pattern[e.atkIdx];
         e.chaseT = 0;
       }
+      if (e.boss && e.hp < e.maxHp * 0.5) g.onBossEnrage(e);
       const mayAttack = e.boss || e.decoy || e.token || tgt !== p;
       e.cd -= dt;
       if (mayAttack && d < e.atk.reach + e.radius && e.cd <= 0) {
@@ -473,7 +482,10 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
         e.t = e.tw = e.atk.windup * enrage * (e.boss ? 0.88 : 1);
         e.aim = Math.atan2(dy, dx);
         e.facing = e.aim;
-        if (e.atk.perilous) sound.playSfx("peril", { at: e, volume: 0.9 });
+        if (e.atk.perilous) {
+          sound.playSfx("peril", { at: e, volume: 0.9 });
+          if (e.arch === "brute" && !e.boss) g.onEnemyBruteCry(e);
+        }
         break;
       }
       const ranged = e.arch === "ranged" && !e.boss;

@@ -8,6 +8,7 @@ export interface GameSettings {
   musicVol: number;
   sfxVol: number;
   ambVol: number;
+  voiceVol: number;
   mouseSensitivity: number;
   invertY: boolean;
   cameraFov: number;
@@ -24,6 +25,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   musicVol: 0.62,
   sfxVol: 0.9,
   ambVol: 0.58,
+  voiceVol: 0.95,
   mouseSensitivity: 1.0,
   invertY: false,
   cameraFov: 58,
@@ -47,6 +49,7 @@ function sanitize(raw: Partial<GameSettings> | null | undefined): GameSettings {
     musicVol: num(raw.musicVol, DEFAULT_SETTINGS.musicVol, 0, 1),
     sfxVol: num(raw.sfxVol, DEFAULT_SETTINGS.sfxVol, 0, 1),
     ambVol: num(raw.ambVol, DEFAULT_SETTINGS.ambVol, 0, 1),
+    voiceVol: num(raw.voiceVol, DEFAULT_SETTINGS.voiceVol, 0, 1),
     mouseSensitivity: num(raw.mouseSensitivity, DEFAULT_SETTINGS.mouseSensitivity, 0.3, 2.5),
     invertY: typeof raw.invertY === "boolean" ? raw.invertY : DEFAULT_SETTINGS.invertY,
     cameraFov: Math.round(num(raw.cameraFov, DEFAULT_SETTINGS.cameraFov, 50, 72)),
