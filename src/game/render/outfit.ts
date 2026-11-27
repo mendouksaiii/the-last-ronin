@@ -469,6 +469,320 @@ export function survivorKit({ torso, b }: Body, scarfColor: number, seed: number
   return out;
 }
 
+/** Custom composite armor, robes, and signature silhouettes for the five generals. */
+export function bossKit(style: "ox" | "bell" | "tide" | "mask" | "genryu", { torso, armR, armL, legR, legL, b }: Body, accentColor: number) {
+  const M = mats();
+  const extra: THREE.MeshStandardMaterial[] = [];
+
+  switch (style) {
+    case "ox": {
+      // Heavy iron samurai chest do, tiered bronze-trimmed o-sode pauldrons, giant shimenawa rope belt, spiked gauntlets.
+      const ironPlate = new THREE.MeshPhysicalMaterial({ color: 0x1e2024, roughness: 0.34, metalness: 0.65, clearcoat: 0.45 });
+      const bronze = new THREE.MeshStandardMaterial({ color: 0xb88632, metalness: 0.88, roughness: 0.28 });
+      const crimson = clothMat(0x7c1218);
+      const hemp = new THREE.MeshStandardMaterial({ color: 0x9e8c66, roughness: 0.9 });
+      extra.push(ironPlate, bronze, crimson, hemp);
+
+      // Layered iron cuirass plates + central bull crest medallion.
+      const chestPlate = part(rbox(0.42 * b, 0.34, 0.28 * b, 0.045), ironPlate);
+      chestPlate.position.set(0, 0.37, 0.02);
+      const collarRim = part(rbox(0.32 * b, 0.055, 0.24 * b, 0.02), bronze);
+      collarRim.position.set(0, 0.54, 0.03);
+      const bullPlate = part(cyl(0.065, 0.065, 0.03, 18), bronze);
+      bullPlate.rotation.x = Math.PI / 2;
+      bullPlate.position.set(0, 0.41, 0.165 * b);
+      torso.add(chestPlate, collarRim, bullPlate);
+      for (let i = 0; i < 3; i++) {
+        const lame = part(rbox((0.39 - i * 0.02) * b, 0.068, 0.26 * b, 0.02), ironPlate);
+        lame.position.set(0, 0.18 + i * 0.075, 0.025);
+        const trim = part(rbox((0.4 - i * 0.02) * b, 0.014, 0.265 * b, 0.004), bronze);
+        trim.position.set(0, 0.15 + i * 0.075, 0.026);
+        torso.add(lame, trim);
+      }
+
+      // Towering braided shimenawa rope belt with crimson waist cords.
+      const ropeRing = part(geo(`oxRope:${b.toFixed(2)}`, () => new THREE.TorusGeometry(0.195 * b, 0.042, 10, 24)), hemp);
+      ropeRing.rotation.x = Math.PI / 2;
+      ropeRing.scale.z = 0.86;
+      ropeRing.position.y = 0.085;
+      const knot = part(sphere(0.065), hemp);
+      knot.scale.set(1.3, 0.95, 0.9);
+      knot.position.set(0, 0.085, 0.175 * b);
+      torso.add(ropeRing, knot);
+      for (const s of [-1, 1]) {
+        const tassel = part(rbox(0.05, 0.22, 0.025, 0.008), crimson);
+        tassel.position.set(s * 0.07 * b, -0.05, 0.17 * b);
+        tassel.rotation.z = s * 0.14;
+        torso.add(tassel);
+      }
+
+      // Massive 3-tier iron o-sode shoulder pauldrons & spiked gauntlets.
+      for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
+        for (let t = 0; t < 3; t++) {
+          const sode = part(rbox(0.15 * b, 0.085, 0.19 * b, 0.018), t === 0 ? bronze : ironPlate);
+          sode.position.set(s * (0.045 + t * 0.014) * b, 0.045 - t * 0.068, 0);
+          sode.rotation.z = s * (-0.36 - t * 0.06);
+          arm.upper.add(sode);
+        }
+        const vambrace = part(cyl(0.072 * b, 0.06 * b, 0.19, 12), ironPlate);
+        vambrace.position.y = -0.14;
+        arm.lower.add(vambrace);
+        for (let sp = 0; sp < 3; sp++) {
+          const spike = part(cyl(0.004, 0.016, 0.048, 8), bronze);
+          spike.position.set(s * 0.072 * b, -0.08 - sp * 0.055, 0);
+          spike.rotation.z = -s * Math.PI / 2;
+          arm.lower.add(spike);
+        }
+      }
+      for (const l of [legR, legL]) {
+        const greave = part(cyl(0.076 * b, 0.062 * b, 0.28, 12), ironPlate);
+        greave.position.y = -0.24;
+        const knee = part(rbox(0.11 * b, 0.11, 0.07, 0.02), bronze);
+        knee.position.set(0, -0.02, 0.055 * b);
+        l.lower.add(greave, knee);
+      }
+      break;
+    }
+
+    case "bell": {
+      // Warrior-abbot vestments: asymmetrical saffron-crimson kesa stole, giant prayer beads (juzu), twin bronze bell pauldrons.
+      const saffron = clothMat(0xc46e18);
+      const crimson = clothMat(0x7c141c);
+      const woodBead = new THREE.MeshPhysicalMaterial({ color: 0x3b2214, roughness: 0.42, clearcoat: 0.3 });
+      const bellBronze = new THREE.MeshStandardMaterial({ color: 0xb58d3d, metalness: 0.86, roughness: 0.24 });
+      extra.push(saffron, crimson, woodBead, bellBronze);
+
+      // Draped asymmetrical saffron kesa stole across chest and left shoulder + gold clasp ring.
+      const stole = part(rbox(0.14 * b, 0.64, 0.34 * b, 0.03), saffron);
+      stole.position.set(0.05 * b, 0.37, 0.01);
+      stole.rotation.z = -0.58;
+      const clasp = part(geo("bellClasp", () => new THREE.TorusGeometry(0.045, 0.012, 10, 20)), bellBronze);
+      clasp.position.set(-0.08 * b, 0.46, 0.185 * b);
+      const obi = part(cyl(0.185 * b, 0.195 * b, 0.14, 24), crimson);
+      obi.scale.z = 0.86;
+      obi.position.y = 0.09;
+      torso.add(stole, clasp, obi);
+
+      // Oversized prayer beads (juzu) hanging in an oval across the chest.
+      const beadGeo = sphere(0.032);
+      const beadCount = 14;
+      for (let i = 0; i < beadCount; i++) {
+        const a = (i / beadCount) * Math.PI * 2;
+        const bx = Math.sin(a) * 0.16 * b;
+        const by = 0.38 + Math.cos(a) * 0.21;
+        const bz = (Math.cos(a) > 0 ? 0.165 : -0.155) * b + (i === 7 ? 0.02 : 0);
+        const bead = part(beadGeo, i % 4 === 0 ? bellBronze : woodBead);
+        bead.position.set(bx, by, bz);
+        torso.add(bead);
+      }
+
+      // Twin bronze temple-bell shoulder guards + suspended miniature clapper bells.
+      for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
+        const bellDome = part(cyl(0.055 * b, 0.125 * b, 0.16, 18), bellBronze);
+        bellDome.position.set(s * 0.04 * b, 0.02, 0);
+        bellDome.rotation.z = s * -0.35;
+        const lip = part(geo(`bellLip:${b.toFixed(2)}`, () => new THREE.TorusGeometry(0.122 * b, 0.014, 8, 18)), bellBronze);
+        lip.rotation.x = Math.PI / 2;
+        lip.position.set(s * 0.068 * b, -0.052, 0);
+        lip.rotation.y = s * -0.35;
+        const cuff = part(cyl(0.064 * b, 0.056 * b, 0.15, 14), M.wrap);
+        cuff.position.y = -0.15;
+        arm.upper.add(bellDome, lip);
+        arm.lower.add(cuff);
+      }
+      for (const l of [legR, legL]) {
+        const wrap = part(cyl(0.072 * b, 0.06 * b, 0.24, 14), M.wrap);
+        wrap.position.y = -0.25;
+        l.lower.add(wrap);
+      }
+      break;
+    }
+
+    case "tide": {
+      // Pirate admiral longcoat: wide high collar, fringed brass epaulets, crossed sea-bandoliers, compass clasp, coiled iron chain.
+      const navyCoat = clothMat(0x162534);
+      const seaCrimson = clothMat(accentColor);
+      const brass = new THREE.MeshStandardMaterial({ color: 0xd4a43e, metalness: 0.88, roughness: 0.24 });
+      const leather = leatherMat(0x281c16);
+      extra.push(navyCoat, seaCrimson, brass, leather);
+
+      // High dramatic flared naval collar framing back & sides of head.
+      const hiCollar = part(geo(`tideCollar:${b.toFixed(2)}`, () => new THREE.CylinderGeometry(0.16 * b, 0.13 * b, 0.15, 22, 1, true, Math.PI * 0.22, Math.PI * 1.56)), seaCrimson);
+      (hiCollar.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+      hiCollar.position.set(0, 0.65, -0.015);
+      hiCollar.rotation.y = Math.PI;
+      torso.add(hiCollar);
+
+      // Crossed sea bandoliers + brass compass medallion + dual naval sash buckles.
+      for (const s of [-1, 1]) {
+        const strap = part(rbox(0.044, 0.58, 0.02, 0.006), leather);
+        strap.position.set(0, 0.35, 0.16 * b);
+        strap.rotation.z = s * 0.52;
+        const lapel = part(rbox(0.055, 0.28, 0.022, 0.006), seaCrimson);
+        lapel.position.set(s * 0.095 * b, 0.44, 0.135 * b);
+        lapel.rotation.set(-0.08, s * 0.22, s * 0.18);
+        torso.add(strap, lapel);
+      }
+      const compass = part(cyl(0.046, 0.046, 0.024, 18), brass);
+      compass.rotation.x = Math.PI / 2;
+      compass.position.set(0, 0.36, 0.17 * b);
+      const sash = part(cyl(0.18 * b, 0.195 * b, 0.12, 24), seaCrimson);
+      sash.scale.z = 0.84;
+      sash.position.y = 0.08;
+      torso.add(compass, sash);
+
+      // Brass-fringed admiral epaulets & cuffed sea sleeves.
+      for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
+        const pad = part(rbox(0.14 * b, 0.036, 0.11 * b, 0.012), navyCoat);
+        pad.position.set(s * 0.045 * b, 0.055, 0);
+        pad.rotation.z = s * -0.18;
+        const rim = part(rbox(0.15 * b, 0.022, 0.118 * b, 0.006), brass);
+        rim.position.set(s * 0.05 * b, 0.068, 0);
+        rim.rotation.z = s * -0.18;
+        const cuff = part(cyl(0.062 * b, 0.066 * b, 0.09, 16), seaCrimson);
+        cuff.position.y = -0.22;
+        arm.upper.add(pad, rim);
+        arm.lower.add(cuff);
+      }
+      for (const l of [legR, legL]) {
+        const bootTop = part(cyl(0.076 * b, 0.07 * b, 0.08, 16), leather);
+        bootTop.position.y = -0.14;
+        l.lower.add(bootTop);
+      }
+      break;
+    }
+
+    case "mask": {
+      // Kabuki phantom assassin: high pointed collar, diamond-gold vest trim, crimson obi with twin back streamers, forearm dagger holsters.
+      const silkBlack = clothMat(0x141218);
+      const crimson = clothMat(0xa01424);
+      const gold = new THREE.MeshStandardMaterial({ color: 0xd6aa48, metalness: 0.9, roughness: 0.2 });
+      const leather = leatherMat(0x1a141a);
+      extra.push(silkBlack, crimson, gold, leather);
+
+      // Tall split theatre collar + crimson chest diamond stole.
+      const collar = part(geo(`maskCollar:${b.toFixed(2)}`, () => new THREE.CylinderGeometry(0.175 * b, 0.125 * b, 0.18, 20, 1, true, Math.PI * 0.25, Math.PI * 1.5)), crimson);
+      (collar.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
+      collar.position.set(0, 0.66, -0.02);
+      collar.rotation.y = Math.PI;
+      const bib = part(rbox(0.16 * b, 0.34, 0.03, 0.008), crimson);
+      bib.position.set(0, 0.38, 0.15 * b);
+      const trim = part(rbox(0.175 * b, 0.36, 0.02, 0.006), gold);
+      trim.position.set(0, 0.38, 0.145 * b);
+      torso.add(collar, trim, bib);
+
+      // Broad crimson obi sash + twin flying ribbon streamers behind hips.
+      const obi = part(cyl(0.178 * b, 0.185 * b, 0.14, 24), crimson);
+      obi.scale.z = 0.86;
+      obi.position.y = 0.08;
+      const obiGold = part(rbox(0.065, 0.055, 0.025, 0.008), gold);
+      obiGold.position.set(0, 0.085, 0.165 * b);
+      torso.add(obi, obiGold);
+      for (const s of [-1, 1]) {
+        const ribbon = part(rbox(0.048, 0.44, 0.012, 0.003), crimson);
+        ribbon.position.set(s * 0.09 * b, -0.1, -0.18 * b);
+        ribbon.rotation.set(0.24, 0, s * 0.18);
+        torso.add(ribbon);
+      }
+
+      // Sleek layered shoulder caps + forearm kunai sheaths.
+      for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
+        const cap = part(rbox(0.13 * b, 0.09, 0.14 * b, 0.02), silkBlack);
+        cap.position.set(s * 0.025 * b, 0.02, 0);
+        cap.rotation.z = s * -0.28;
+        const trimEdge = part(rbox(0.135 * b, 0.02, 0.145 * b, 0.005), gold);
+        trimEdge.position.set(s * 0.028 * b, -0.015, 0);
+        trimEdge.rotation.z = s * -0.28;
+        const sheath = part(rbox(0.045, 0.2, 0.045, 0.01), leather);
+        sheath.position.set(s * 0.05 * b, -0.15, 0);
+        arm.upper.add(cap, trimEdge);
+        arm.lower.add(sheath);
+      }
+      break;
+    }
+
+    case "genryu": {
+      // Sword Saint: grandmaster charcoal kimono & haori war vest, gilded camellia crest, kusazuri hip tassets, lacquered hip scabbard.
+      const haori = clothMat(0x201f24);
+      const ivory = clothMat(0xd6cfc2);
+      const gold = new THREE.MeshStandardMaterial({ color: 0xc99c3e, metalness: 0.88, roughness: 0.22 });
+      const armor = armorMat();
+      const lacquer = new THREE.MeshPhysicalMaterial({ color: 0x160c0c, roughness: 0.2, clearcoat: 1 });
+      extra.push(haori, ivory, gold, armor, lacquer);
+
+      // Crossed kimono inner collar (ivory) + outer haori lapel borders.
+      for (const s of [-1, 1]) {
+        const inner = part(rbox(0.055, 0.34, 0.022, 0.006), ivory);
+        inner.position.set(s * 0.032 * b, 0.45, 0.135 * b);
+        inner.rotation.z = s * 0.34;
+        const outer = part(rbox(0.07, 0.44, 0.026, 0.008), haori);
+        outer.position.set(s * 0.092 * b, 0.38, 0.142 * b);
+        outer.rotation.z = s * 0.12;
+        torso.add(inner, outer);
+      }
+      // Gilded clan crest medallion on chest + back.
+      for (const zSign of [1, -1]) {
+        const mon = part(cyl(0.05, 0.05, 0.015, 20), gold);
+        mon.rotation.x = Math.PI / 2;
+        mon.position.set(0, 0.45, zSign * 0.158 * b);
+        torso.add(mon);
+      }
+
+      // Broad braided obi & layered lacquered kusazuri skirt armor tassets.
+      const obi = part(cyl(0.18 * b, 0.188 * b, 0.12, 24), ivory);
+      obi.scale.z = 0.86;
+      obi.position.y = 0.09;
+      torso.add(obi);
+      for (let i = 0; i < 4; i++) {
+        const ang = (i / 4) * Math.PI * 2 + Math.PI * 0.25;
+        const tx = Math.sin(ang) * 0.19 * b;
+        const tz = Math.cos(ang) * 0.16 * b;
+        const tasset = part(rbox(0.14 * b, 0.22, 0.022, 0.006), armor);
+        tasset.position.set(tx, -0.05, tz);
+        tasset.rotation.y = ang;
+        tasset.rotation.x = -0.14;
+        const tTrim = part(rbox(0.145 * b, 0.022, 0.026, 0.004), gold);
+        tTrim.position.set(tx * 1.02, -0.15, tz * 1.02);
+        tTrim.rotation.y = ang;
+        tTrim.rotation.x = -0.14;
+        torso.add(tasset, tTrim);
+      }
+
+      // Lacquered scabbard (saya) carried cleanly at his left hip.
+      const scabbardGrp = new THREE.Group();
+      scabbardGrp.position.set(0.2 * b, 0.06, -0.04);
+      scabbardGrp.rotation.set(-0.32, 0.14, -0.1);
+      const saya = part(rbox(0.032, 0.046, 0.96, 0.012), lacquer);
+      saya.position.z = -0.12;
+      const kojiri = part(cyl(0.024, 0.02, 0.05, 12), gold);
+      kojiri.rotation.x = Math.PI / 2;
+      kojiri.position.z = -0.6;
+      scabbardGrp.add(saya, kojiri);
+      torso.add(scabbardGrp);
+
+      // Samurai kote bracers & greaves.
+      for (const [arm, s] of [[armR, -1], [armL, 1]] as const) {
+        const shoulderPlate = part(rbox(0.13 * b, 0.12, 0.15 * b, 0.018), armor);
+        shoulderPlate.position.set(s * 0.03 * b, 0.02, 0);
+        shoulderPlate.rotation.z = s * -0.32;
+        const kote = part(cyl(0.06 * b, 0.05 * b, 0.18, 14), armor);
+        kote.position.y = -0.14;
+        const trim = part(cyl(0.062 * b, 0.062 * b, 0.02, 14), gold);
+        trim.position.y = -0.07;
+        arm.upper.add(shoulderPlate);
+        arm.lower.add(kote, trim);
+      }
+      for (const l of [legR, legL]) {
+        const suneate = part(cyl(0.07 * b, 0.058 * b, 0.25, 14), armor);
+        suneate.position.y = -0.24;
+        l.lower.add(suneate);
+      }
+      break;
+    }
+  }
+  return extra;
+}
+
 /** The hero's long black hooded cloak. Arched neatly over the carapace so it never clips, open in front for the harness. */
 export const CLOAK = (b: number, seed: number): CapeSpec => ({
   top: 0.71,

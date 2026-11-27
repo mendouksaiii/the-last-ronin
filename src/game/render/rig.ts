@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { detailMaps, shellTextures } from "./textures";
 import type { Cape } from "./cloak";
-import { CLOAK, RAG, addHood, beanie, makeCape, oniHead, roninKit, survivorKit, tacticalKit } from "./outfit";
+import { CLOAK, RAG, addHood, beanie, bossKit, makeCape, oniHead, roninKit, survivorKit, tacticalKit } from "./outfit";
 import { humanHead, person } from "./human";
 
 // Character models built from smooth, anatomically proportioned volumes with physically based
@@ -46,7 +46,7 @@ export interface Look {
   cloak?: number;
   /** A tattered cloth hanging from one shoulder. */
   cape?: number;
-  outfit?: "tactical" | "survivor" | "ronin";
+  outfit?: "tactical" | "survivor" | "ronin" | "ox" | "bell" | "tide" | "mask" | "genryu";
   /** Inner shirt colour when wearing a layered jacket. */
   shirt?: number;
   /** Trousers, when they differ from the coat. */
@@ -301,7 +301,7 @@ function limb(parent: THREE.Object3D, x: number, y: number, r1: number, l1: numb
 
 // ---------- Weapons ----------
 
-function buildGear(kind: Gear): GearParts | null {
+function buildGear(kind: Gear, style?: Look["outfit"]): GearParts | null {
   if (kind === "none") return null;
   const M = mats();
   const group = new THREE.Group();
@@ -309,26 +309,36 @@ function buildGear(kind: Gear): GearParts | null {
   const base = new THREE.Object3D();
   group.add(tip, base);
   const out: GearParts = { group, tip, base };
+  const isBossKatana = kind === "katana" && style === "genryu";
+  const isMaskBlade = kind === "knives" && style === "mask";
   switch (kind) {
     case "katana":
     case "machete":
     case "knives": {
-      const len = kind === "katana" ? 0.8 : kind === "machete" ? 0.55 : 0.3;
+      const len = isBossKatana ? 1.02 : kind === "katana" ? 0.8 : kind === "machete" ? 0.55 : isMaskBlade ? 0.44 : 0.3;
       const steel = STEEL();
-      const grip = part(rbox(0.032, 0.036, kind === "katana" ? 0.26 : 0.13, 0.012), M.wrap);
+      const grip = part(rbox(0.032, 0.036, isBossKatana ? 0.3 : kind === "katana" ? 0.26 : isMaskBlade ? 0.16 : 0.13, 0.012), M.wrap);
       grip.position.z = 0.02;
-      const guard = part(cyl(0.045, 0.045, 0.012, 20), M.steelWrap);
+      const goldTrim = isBossKatana || isMaskBlade ? new THREE.MeshStandardMaterial({ color: 0xd4a438, metalness: 0.9, roughness: 0.2 }) : M.steelWrap;
+      const guard = part(cyl(isBossKatana ? 0.056 : 0.045, isBossKatana ? 0.056 : 0.045, 0.014, 20), goldTrim);
       guard.rotation.x = Math.PI / 2;
-      guard.position.z = kind === "katana" ? 0.15 : 0.08;
+      guard.position.z = isBossKatana ? 0.18 : kind === "katana" ? 0.15 : 0.08;
+      if (isMaskBlade) {
+        const pommel = part(geo("maskPommel", () => new THREE.TorusGeometry(0.022, 0.006, 8, 14)), goldTrim);
+        pommel.position.z = -0.08;
+        const tassel = part(rbox(0.018, 0.09, 0.018, 0.004), new THREE.MeshStandardMaterial({ color: 0xa81020, roughness: 0.8 }));
+        tassel.position.set(0, -0.05, -0.09);
+        group.add(pommel, tassel);
+      }
       // A slightly curved, tapered blade.
       const shape = new THREE.Shape();
-      const bw = kind === "machete" ? 0.07 : 0.032;
+      const bw = kind === "machete" ? 0.07 : isBossKatana ? 0.036 : 0.032;
       shape.moveTo(0, 0);
-      shape.lineTo(len, kind === "katana" ? 0.02 : 0);
+      shape.lineTo(len, kind === "katana" || isMaskBlade ? 0.024 : 0);
       shape.lineTo(len - 0.05, bw * 0.95);
       shape.quadraticCurveTo(len * 0.5, bw * 1.05, 0, bw);
       shape.lineTo(0, 0);
-      const bladeGeo = geo(`blade${kind}`, () => {
+      const bladeGeo = geo(`blade${kind}${style ?? ""}`, () => {
         const g = new THREE.ExtrudeGeometry(shape, { depth: 0.006, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1, curveSegments: 10 });
         g.translate(0, -bw / 2, -0.003);
         g.rotateY(-Math.PI / 2);
@@ -381,12 +391,26 @@ function buildGear(kind: Gear): GearParts | null {
     case "kusari":
     case "sickle": {
       if (kind === "sickle") {
-        const handle = part(rbox(0.035, 0.035, 0.32, 0.01), M.wood);
+        const handle = part(rbox(0.035, 0.035, 0.36, 0.01), M.wood);
         handle.position.z = 0.08;
+        const brass = new THREE.MeshStandardMaterial({ color: 0xc99c3c, metalness: 0.88, roughness: 0.25 });
+        const guard = part(rbox(0.02, 0.12, 0.03, 0.008), brass);
+        guard.position.set(0, -0.04, 0.22);
         const steel = STEEL();
-        const hook = part(rbox(0.01, 0.3, 0.04, 0.004), steel);
-        hook.position.set(0, 0.13, 0.24);
-        group.add(handle, hook);
+        // Curved pirate crescent sickle blade.
+        const sShape = new THREE.Shape();
+        sShape.moveTo(0, 0);
+        sShape.quadraticCurveTo(0.06, 0.22, -0.08, 0.34);
+        sShape.quadraticCurveTo(0.01, 0.2, -0.04, 0);
+        sShape.closePath();
+        const sickleGeo = geo("tideSickle", () => {
+          const g = new THREE.ExtrudeGeometry(sShape, { depth: 0.008, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1, curveSegments: 12 });
+          g.rotateY(Math.PI / 2);
+          return g;
+        });
+        const hook = part(sickleGeo, steel);
+        hook.position.set(-0.004, 0.01, 0.24);
+        group.add(handle, guard, hook);
         out.steel = steel;
       } else {
         const coil = part(geo("coil", () => new THREE.TorusGeometry(0.05, 0.012, 10, 20)), M.iron);
@@ -398,7 +422,7 @@ function buildGear(kind: Gear): GearParts | null {
       const links = part(cyl(0.008, 0.008, 1, 6), M.iron);
       links.position.y = -0.5;
       chain.add(links);
-      const weight = part(rbox(0.07, 0.11, 0.07, 0.015), M.iron);
+      const weight = kind === "sickle" ? part(cyl(0.02, 0.07, 0.14, 6), M.iron) : part(rbox(0.07, 0.11, 0.07, 0.015), M.iron);
       group.add(chain, weight);
       out.chain = chain;
       out.weight = weight;
@@ -429,8 +453,8 @@ function buildGear(kind: Gear): GearParts | null {
     case "hammer":
     case "club":
     case "naginata": {
-      const len = kind === "naginata" ? 2 : kind === "hammer" ? 1.1 : 1.25;
-      const shaft = part(kind === "club" ? cyl(0.11, 0.05, len, 18) : cyl(0.025, 0.025, len, 14), kind === "club" ? M.iron : M.wood);
+      const len = kind === "naginata" ? 2.15 : kind === "hammer" ? 1.1 : 1.42;
+      const shaft = part(kind === "club" ? cyl(0.115, 0.045, len, 8) : cyl(0.025, 0.025, len, 14), kind === "club" ? M.iron : M.wood);
       shaft.rotation.x = Math.PI / 2;
       shaft.position.z = len / 2 - 0.2;
       group.add(shaft);
@@ -441,15 +465,54 @@ function buildGear(kind: Gear): GearParts | null {
         group.add(head);
       } else if (kind === "naginata") {
         const steel = STEEL();
-        const blade = part(rbox(0.012, 0.06, 0.55, 0.005), steel);
-        blade.position.z = len - 0.2 + 0.25;
-        group.add(blade);
+        const bronze = new THREE.MeshStandardMaterial({ color: 0xb58d3d, metalness: 0.88, roughness: 0.25 });
+        const crimson = new THREE.MeshStandardMaterial({ color: 0x8a141c, roughness: 0.85 });
+        // Sweeping curved naginata blade + bronze collar & hanging temple tassel.
+        const nShape = new THREE.Shape();
+        nShape.moveTo(0, 0);
+        nShape.lineTo(0.64, 0.045);
+        nShape.quadraticCurveTo(0.56, 0.088, 0, 0.042);
+        nShape.closePath();
+        const nagGeo = geo("naginataBlade", () => {
+          const g = new THREE.ExtrudeGeometry(nShape, { depth: 0.008, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1, curveSegments: 10 });
+          g.translate(0, -0.02, -0.004);
+          g.rotateY(-Math.PI / 2);
+          return g;
+        });
+        const blade = part(nagGeo, steel);
+        blade.position.z = len - 0.22;
+        const collar = part(cyl(0.046, 0.046, 0.05, 16), bronze);
+        collar.rotation.x = Math.PI / 2;
+        collar.position.z = len - 0.22;
+        const tassel = part(cyl(0.015, 0.045, 0.2, 12), crimson);
+        tassel.position.set(0, -0.11, len - 0.24);
+        const cap = part(cyl(0.01, 0.032, 0.14, 10), bronze);
+        cap.rotation.x = -Math.PI / 2;
+        cap.position.z = -0.26;
+        group.add(blade, collar, tassel, cap);
         out.steel = steel;
       } else {
-        for (let i = 0; i < 4; i++) {
-          const stud = part(rbox(0.05, 0.05, 0.05, 0.01), M.steelWrap);
-          stud.position.set(Math.cos(i * 1.57) * 0.1, Math.sin(i * 1.57) * 0.1, len - 0.45);
-          group.add(stud);
+        // Ox's spiked iron Kanabo with bronze bands & rows of heavy studs.
+        const bronze = new THREE.MeshStandardMaterial({ color: 0xb88632, metalness: 0.86, roughness: 0.28 });
+        const wrap = new THREE.MeshStandardMaterial({ color: 0x6a1018, roughness: 0.8 });
+        const handleWrap = part(cyl(0.052, 0.048, 0.34, 12), wrap);
+        handleWrap.rotation.x = Math.PI / 2;
+        handleWrap.position.z = 0.04;
+        group.add(handleWrap);
+        for (let ring = 0; ring < 3; ring++) {
+          const rz = len - 0.72 + ring * 0.24;
+          const band = part(cyl(0.112 + ring * 0.006, 0.105 + ring * 0.006, 0.035, 10), bronze);
+          band.rotation.x = Math.PI / 2;
+          band.position.z = rz;
+          group.add(band);
+          for (let i = 0; i < 6; i++) {
+            const ang = i * (Math.PI / 3) + ring * 0.5;
+            const stud = part(cyl(0.006, 0.022, 0.055, 8), M.steelWrap);
+            const rr = 0.105 + ring * 0.006;
+            stud.position.set(Math.cos(ang) * rr, Math.sin(ang) * rr, rz);
+            stud.rotation.z = ang - Math.PI / 2;
+            group.add(stud);
+          }
         }
       }
       tip.position.z = len - 0.1;
@@ -595,66 +658,162 @@ function buildHead(head: THREE.Group, look: Look, skin: THREE.Material, cloth: T
     case "hood":
     case "kerchief": {
       face(skin);
-      const hood = part(sphere(0.15), cloth);
-      hood.scale.set(1.05, 1.1, 1.08);
-      hood.position.set(0, 0.03, -0.025);
-      head.add(hood);
-      // A cloth face mask over the mouth, and cyber goggles.
-      const mask = part(sphere(0.11), look.head === "kerchief" ? accent : M.wrap);
-      mask.scale.set(1, 0.65, 0.9);
-      mask.position.set(0, -0.055, 0.05);
-      head.add(mask);
-      const visor = part(rbox(0.16, 0.035, 0.03, 0.012), M.iron);
-      visor.position.set(0, 0.012, 0.115);
-      head.add(visor);
-      glowEyes(0.13, 0.012, 0.04, 0.014);
+      if (look.outfit === "tide") {
+        // Pirate admiral: windswept crimson bandana, flared navy/gold admiral collar cap, stitched sea-mask.
+        const bandana = part(sphere(0.142), accent);
+        bandana.scale.set(1.04, 0.92, 1.12);
+        bandana.position.set(0, 0.045, -0.015);
+        const brim = part(rbox(0.32, 0.065, 0.26, 0.018), cloth);
+        brim.position.set(0, 0.115, 0.01);
+        brim.rotation.x = -0.14;
+        const goldRim = part(rbox(0.33, 0.018, 0.268, 0.006), new THREE.MeshStandardMaterial({ color: 0xd4a43e, metalness: 0.88, roughness: 0.25 }));
+        goldRim.position.set(0, 0.145, 0.012);
+        goldRim.rotation.x = -0.14;
+        const mask = part(sphere(0.112), M.boot);
+        mask.scale.set(1, 0.68, 0.92);
+        mask.position.set(0, -0.055, 0.052);
+        head.add(bandana, brim, goldRim, mask);
+        glowEyes(0.125, 0.015, 0.042, 0.015);
+        tails = new THREE.Group();
+        tails.position.set(0, 0.01, -0.155);
+        for (const s of [-1, 1]) {
+          const tail = part(rbox(0.036, 0.012, 0.32, 0.004), accent);
+          tail.position.set(s * 0.04, -0.02, -0.14);
+          tail.rotation.set(-0.22, s * 0.28, s * 0.1);
+          tails.add(tail);
+        }
+        head.add(tails);
+      } else {
+        const hood = part(sphere(0.15), cloth);
+        hood.scale.set(1.05, 1.1, 1.08);
+        hood.position.set(0, 0.03, -0.025);
+        head.add(hood);
+        const mask = part(sphere(0.11), look.head === "kerchief" ? accent : M.wrap);
+        mask.scale.set(1, 0.65, 0.9);
+        mask.position.set(0, -0.055, 0.05);
+        head.add(mask);
+        const visor = part(rbox(0.16, 0.035, 0.03, 0.012), M.iron);
+        visor.position.set(0, 0.012, 0.115);
+        head.add(visor);
+        glowEyes(0.13, 0.012, 0.04, 0.014);
+      }
       break;
     }
     case "helmet": {
-      const shell = part(rbox(0.28, 0.3, 0.3, 0.07), M.iron);
-      shell.position.y = 0.02;
-      head.add(shell);
-      const slit = new THREE.Mesh(box(0.2, 0.025, 0.02), eyes);
-      slit.position.set(0, 0.03, 0.152);
+      // Ox's horned samurai kabuto war-helm with bronze crescent horns, shikoro neck plates, and fanged iron menpo mask.
+      const kabutoBronze = new THREE.MeshStandardMaterial({ color: 0xc28f34, metalness: 0.88, roughness: 0.24, side: THREE.DoubleSide });
+      const kabutoIron = new THREE.MeshPhysicalMaterial({ color: 0x26282c, metalness: 0.72, roughness: 0.34, clearcoat: 0.4, side: THREE.DoubleSide });
+      const kabutoCrimson = clothMat(0x7c1218);
+      const dome = part(sphere(0.155), kabutoIron);
+      dome.scale.set(1.06, 0.95, 1.1);
+      dome.position.set(0, 0.065, -0.005);
+      const peak = part(rbox(0.26, 0.035, 0.16, 0.012), kabutoBronze);
+      peak.position.set(0, 0.065, 0.095);
+      peak.rotation.x = 0.28;
+      head.add(dome, peak);
+      // Tiered shikoro neck-guard plates flaring down the back and sides.
+      for (let i = 0; i < 3; i++) {
+        const shikoroGeo = geo(`shikoro:${i}`, () => new THREE.CylinderGeometry(0.15 + i * 0.018, 0.17 + i * 0.02, 0.042, 18, 1, true, Math.PI * 0.25, Math.PI * 1.5));
+        const shikoro = part(shikoroGeo, i === 0 ? kabutoBronze : kabutoIron);
+        shikoro.position.set(0, 0.01 - i * 0.04, -0.02);
+        shikoro.rotation.y = Math.PI;
+        head.add(shikoro);
+      }
+      // Sweeping gold bull horns (kuwagata) + crimson brow crest.
+      for (const s of [-1, 1]) {
+        const hornBase = part(cyl(0.018, 0.03, 0.14, 12), kabutoBronze);
+        hornBase.position.set(s * 0.08, 0.165, 0.115);
+        hornBase.rotation.set(0.25, 0, -s * 0.65);
+        const hornTip = part(cyl(0.004, 0.018, 0.16, 12), kabutoBronze);
+        hornTip.position.set(s * 0.155, 0.265, 0.125);
+        hornTip.rotation.set(0.42, 0, s * 0.18);
+        head.add(hornBase, hornTip);
+      }
+      const maedate = part(rbox(0.04, 0.095, 0.025, 0.006), kabutoCrimson);
+      maedate.position.set(0, 0.145, 0.145);
+      head.add(maedate);
+      // Fierce fanged iron menpo face guard & glowing ember slit eyes.
+      const menpo = part(rbox(0.21, 0.14, 0.16, 0.03), M.iron);
+      menpo.position.set(0, -0.03, 0.068);
+      head.add(menpo);
+      const slit = new THREE.Mesh(box(0.17, 0.022, 0.02), eyes);
+      slit.position.set(0, 0.025, 0.152);
       head.add(slit);
-      const grill = part(rbox(0.16, 0.08, 0.03, 0.01), M.steelWrap);
-      grill.position.set(0, -0.06, 0.145);
-      head.add(grill);
       break;
     }
     case "monk": {
       face(skin);
-      const hat = part(cyl(0.05, 0.3, 0.14, 32), cloth);
-      hat.position.y = 0.15;
-      head.add(hat);
-      realEyes(0.1, 0.012, 0.04, 0.014);
+      // Abbot Joshin's tall curved temple hat with bronze bell finial and prayer mark.
+      const bellBronze = new THREE.MeshStandardMaterial({ color: 0xb58d3d, metalness: 0.88, roughness: 0.24 });
+      const hat = part(cyl(0.045, 0.34, 0.16, 32), cloth);
+      hat.position.y = 0.16;
+      const finial = part(cyl(0.018, 0.038, 0.08, 16), bellBronze);
+      finial.position.y = 0.26;
+      const browMark = part(sphere(0.012), bellBronze);
+      browMark.position.set(0, 0.045, 0.122);
+      head.add(hat, finial, browMark);
+      glowEyes(0.105, 0.014, 0.04, 0.015);
       break;
     }
     case "mask": {
-      const skull = part(sphere(0.13), cloth);
-      skull.scale.set(1, 1.08, 1.04);
+      const skull = part(sphere(0.132), cloth);
+      skull.scale.set(1.02, 1.1, 1.06);
       head.add(skull);
-      const mask = part(sphere(0.12), new THREE.MeshPhysicalMaterial({ color: 0xd8d2c8, roughness: 0.3, clearcoat: 0.8 }));
-      mask.scale.set(1, 1.15, 0.6);
-      mask.position.z = 0.07;
-      head.add(mask);
-      glowEyes(0.135, 0.03, 0.042, 0.014);
+      // Sculpted porcelain Kitsune/Kabuki mask with pointed fox ears & crimson theatre stripes.
+      const porcelain = new THREE.MeshPhysicalMaterial({ color: 0xe6e0d4, roughness: 0.24, clearcoat: 0.9 });
+      const paint = new THREE.MeshStandardMaterial({ color: 0xb81024, roughness: 0.4 });
+      const mask = part(sphere(0.122), porcelain);
+      mask.scale.set(0.96, 1.18, 0.62);
+      mask.position.z = 0.075;
+      const snout = part(rbox(0.068, 0.075, 0.075, 0.025), porcelain);
+      snout.position.set(0, -0.055, 0.13);
+      snout.rotation.x = 0.28;
+      head.add(mask, snout);
+      for (const s of [-1, 1]) {
+        const ear = part(geo("kitsuneEar", () => new THREE.ConeGeometry(0.036, 0.12, 8)), porcelain);
+        ear.position.set(s * 0.072, 0.175, 0.065);
+        ear.rotation.set(0.16, 0, -s * 0.25);
+        const stripe = part(rbox(0.012, 0.085, 0.014, 0.003), paint);
+        stripe.position.set(s * 0.055, -0.015, 0.145);
+        stripe.rotation.z = s * 0.34;
+        const brow = part(rbox(0.048, 0.012, 0.014, 0.003), paint);
+        brow.position.set(s * 0.044, 0.058, 0.142);
+        brow.rotation.z = -s * 0.22;
+        head.add(ear, stripe, brow);
+      }
+      glowEyes(0.142, 0.028, 0.042, 0.014);
+      tails = new THREE.Group();
+      tails.position.set(0, 0.02, -0.14);
+      for (const s of [-1, 1]) {
+        const ribbon = part(rbox(0.03, 0.008, 0.42, 0.003), paint);
+        ribbon.position.set(s * 0.035, -0.01, -0.19);
+        ribbon.rotation.set(-0.18, s * 0.22, 0);
+        tails.add(ribbon);
+      }
+      head.add(tails);
       break;
     }
     case "hair": {
       face(skin);
-      const hairMat = new THREE.MeshPhysicalMaterial({ color: 0xcfc8bc, roughness: 0.55, sheen: 1, sheenColor: new THREE.Color(0xffffff), normalMap: charTex().fabric });
+      const hairMat = new THREE.MeshPhysicalMaterial({ color: 0xd4cdc0, roughness: 0.55, sheen: 1, sheenColor: new THREE.Color(0xffffff), normalMap: charTex().fabric });
+      const bandMat = clothMat(0x88161e);
       const hair = part(sphere(0.128), hairMat);
       hair.scale.set(1.02, 0.85, 1.06);
       hair.position.set(0, 0.055, -0.02);
       head.add(hair);
-      const knot = part(sphere(0.045), hairMat);
-      knot.position.set(0, 0.16, -0.06);
-      head.add(knot);
-      const beard = part(sphere(0.07), hairMat);
-      beard.scale.set(1, 1.3, 0.7);
-      beard.position.set(0, -0.11, 0.07);
-      head.add(beard);
+      const knot = part(cyl(0.028, 0.036, 0.095, 12), hairMat);
+      knot.position.set(0, 0.165, -0.055);
+      knot.rotation.x = -0.35;
+      const headband = part(cyl(0.132, 0.132, 0.036, 24, true), bandMat);
+      headband.scale.z = 1.08;
+      headband.position.set(0, 0.055, -0.005);
+      head.add(knot, headband);
+      const beard = part(sphere(0.072), hairMat);
+      beard.scale.set(0.95, 1.45, 0.68);
+      beard.position.set(0, -0.12, 0.075);
+      const stache = part(rbox(0.12, 0.024, 0.032, 0.01), hairMat);
+      stache.position.set(0, -0.035, 0.118);
+      head.add(beard, stache);
       realEyes(0.1, 0.012, 0.04, 0.014);
       break;
     }
@@ -996,9 +1155,9 @@ function buildBody(look: Look): Rig {
     coat = { L, R, back };
   }
 
-  const weapon = buildGear(look.gear);
+  const weapon = buildGear(look.gear, look.outfit);
   if (weapon) armR.end.add(weapon.group);
-  const off = look.offGear ? buildGear(look.offGear) : null;
+  const off = look.offGear ? buildGear(look.offGear, look.outfit) : null;
   if (off) armL.end.add(off.group);
   let sheath: Rig["sheath"] = null;
   if (look.gear === "katana" && look.shell && weapon) {
@@ -1029,6 +1188,7 @@ function buildBody(look: Look): Rig {
   if (look.outfit === "ronin") extra.push(...roninKit(parts, look.accent, look.gear, look.cloak));
   else if (look.outfit === "tactical") extra.push(...tacticalKit(parts, look.accent, look.gear !== "katana" && look.gear !== "crossbow", seed));
   else if (look.outfit === "survivor") extra.push(...survivorKit(parts, look.accent, seed, look.shirt));
+  else if (look.outfit) extra.push(...bossKit(look.outfit, parts, look.accent));
   const capes: Cape[] = [];
   if (look.cloak !== undefined) {
     const c = makeCape(CLOAK(b, seed), look.cloak);

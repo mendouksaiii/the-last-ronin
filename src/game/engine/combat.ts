@@ -334,6 +334,40 @@ function land(g: Game) {
 export function hitEnemy(g: Game, e: Enemy, raw: number, move: Move, counter: boolean) {
   const p = g.player;
   const ang = Math.atan2(e.y - p.y, e.x - p.x);
+
+  // Boss reactive dodge i-frames let agile generals slip past incoming blows.
+  if (e.dodgeInvuln > 0 && e.state === "dodge") {
+    const isShadow = e.boss?.dodgeStyle === "shadow";
+    sound.playSfx("dodge", { at: e, volume: 0.72, jitter: 0.1 });
+    g.float(e, isShadow ? "Vanished" : "Evaded", "#b8c8dc");
+    g.burst({ k: isShadow ? "shadow" : "dust", x: e.x, y: e.y, z: p.z, n: 8, dir: ang + Math.PI, r: 1.4, color: 0xc02050 });
+    g.onBossEvade(e);
+    return;
+  }
+
+  // Grandmaster "Still Water" stance deflects reckless frontal normal blows and immediately counter-cuts.
+  if (
+    e.guardT > 0 &&
+    e.boss?.dodgeStyle === "deflect" &&
+    move.tier !== "special" &&
+    !counter &&
+    angleDiff(ang + Math.PI, e.facing) < 1.35
+  ) {
+    e.guardT = 0;
+    e.flash = 0.08;
+    sound.playSfx("parry", { at: e, volume: 0.96 });
+    sound.playSfx("parryRing", { at: e, volume: 0.85 });
+    g.float(e, "Deflected!", "#ff8a1f", true);
+    g.burst({ k: "parry", x: e.x + Math.cos(e.facing) * 0.55, y: e.y + Math.sin(e.facing) * 0.55, z: p.z, n: 14, dir: e.facing });
+    e.state = "windup";
+    e.atk = { k: "cone", name: "Riposte", windup: 0.34, dmg: 0.95, reach: 3.2, range: 3.4, half: 1.15 };
+    e.t = e.tw = 0.34;
+    e.aim = Math.atan2(p.y - e.y, p.x - e.x);
+    e.facing = e.aim;
+    g.onBossDeflect(e);
+    return;
+  }
+
   let mult = 1;
   if (e.state === "stagger" || e.stun > 0) mult *= 1.5;
   if (e.guardT > 0) mult *= 0.25;
@@ -354,15 +388,18 @@ export function hitEnemy(g: Game, e: Enemy, raw: number, move: Move, counter: bo
   g.shake(counter || move.dmg >= 1.5 ? 0.18 : 0.07);
   if (!e.object) {
     alert(g, e, p);
-    e.poise += move.stagger * (counter ? 2.2 : 1) * (e.boss ? 0.6 : 1);
+    const poiseScale = e.boss ? 0.6 * (e.boss.poiseMult ?? 1) : 1;
+    e.poise += move.stagger * (counter ? 2.2 : 1) * poiseScale;
     if (e.poise >= e.maxPoise && e.state !== "stagger") {
       e.state = "stagger";
       e.t = e.boss ? 1.8 : 1.4;
       e.guardT = 0;
+      e.comboLeft = 0;
       e.token = false;
       sound.playSfx("guardBreak", { at: e, volume: 0.9 });
       g.float(e, "Broken", "#ff5a1f", true);
       g.burst({ k: "guardBreak", x: e.x, y: e.y, z: p.z, n: 12, dir: ang, r: 2.8 });
+      if (e.boss) g.onBossStaggered(e);
     } else if (e.state === "windup" && !e.boss && (move.stagger >= 40 || counter) && e.arch !== "brute") {
       e.state = "recover";
       e.t = 0.4;
@@ -423,6 +460,7 @@ export function hurtPlayer(g: Game, dmg: number, from: Vec | null, perilous: boo
         attacker.token = false;
         sound.playSfx("guardBreak", { at: attacker, volume: 0.85 });
         g.float(attacker, "Broken", "#ff5a1f", true);
+        if (attacker.boss) g.onBossStaggered(attacker);
       } else {
         attacker.state = "recover";
         attacker.t = 0.9;

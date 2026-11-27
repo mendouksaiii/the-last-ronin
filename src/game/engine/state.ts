@@ -168,7 +168,19 @@ export interface Player extends Vec {
   walk: number;
 }
 
-export type EnemyState = "idle" | "patrol" | "search" | "chase" | "circle" | "windup" | "recover" | "stagger" | "home" | "dead";
+export type EnemyState =
+  | "idle"
+  | "patrol"
+  | "search"
+  | "chase"
+  | "sprint"
+  | "circle"
+  | "windup"
+  | "recover"
+  | "stagger"
+  | "dodge"
+  | "home"
+  | "dead";
 
 export interface Enemy extends Vec {
   id: number;
@@ -198,6 +210,7 @@ export interface Enemy extends Vec {
   beast: boolean;
   decoy: boolean;
   boss: BossDef | null;
+  bossStyle?: BossDef["look"];
   atk: AttackSpec;
   atkIdx: number;
   cd: number;
@@ -221,6 +234,21 @@ export interface Enemy extends Vec {
   token: boolean;
   circleDir: number;
   killedBy: "takedown" | "blow" | null;
+  /** Boss evasion cooldown & state fields. */
+  dodgeCd: number;
+  dodgeDir: number;
+  dodgeInvuln: number;
+  dodgeSpeed: number;
+  /** Remaining follow-up strikes in an active combo skill. */
+  comboLeft: number;
+  /** Whether Phase 2 (< 50% HP) escalation has activated. */
+  phase2: boolean;
+  /** Target coordinates locked for leaping slams or blink ambushes. */
+  leapX?: number;
+  leapY?: number;
+  leapStartX?: number;
+  leapStartY?: number;
+  blinked?: boolean;
 }
 
 export interface Shot extends Vec {
@@ -231,7 +259,19 @@ export interface Shot extends Vec {
   dmg: number;
   life: number;
   pull: boolean;
+  blade?: boolean;
   r: number;
+}
+
+export interface Shockwave extends Vec {
+  delay: number;
+  r: number;
+  maxR: number;
+  dmg: number;
+  perilous: boolean;
+  color: number;
+  owner: Enemy;
+  hit: boolean;
 }
 
 export interface Npc extends Vec {

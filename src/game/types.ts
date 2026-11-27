@@ -153,7 +153,7 @@ export interface Weapon {
 
 /** One enemy or boss attack, in metres. Bosses cycle a pattern. */
 export interface AttackSpec {
-  k: "cone" | "slam" | "charge" | "shots" | "summon" | "decoys" | "guard";
+  k: "cone" | "slam" | "charge" | "shots" | "summon" | "decoys" | "guard" | "leap" | "blink" | "combo";
   name?: string;
   windup: number;
   /** Damage multiplier of the attacker's base damage. */
@@ -169,6 +169,18 @@ export interface AttackSpec {
   spread?: number;
   speed?: number;
   pull?: boolean;
+  /** Fires wide glowing blade-wave projectiles rather than darts/beads. */
+  blade?: boolean;
+  /** Multi-ring shockwave count for slam/leap attacks. */
+  waves?: number;
+  /** Number of rapid strikes for combo attacks. */
+  hits?: number;
+  /** Forward step distance per combo strike. */
+  step?: number;
+  /** Blink leaves a shadow decoy behind where the boss vanished. */
+  leaveDecoy?: boolean;
+  /** Guard stance counters reckless frontal blows instead of only soaking them. */
+  counter?: boolean;
   arch?: Archetype;
   dur?: number;
   /** Cannot be blocked or parried: it must be dodged. */
@@ -177,6 +189,8 @@ export interface AttackSpec {
 
 export type BossLook = "ox" | "bell" | "tide" | "mask" | "genryu";
 
+export type BossDodgeStyle = "none" | "backstep" | "sidestep" | "shadow" | "deflect";
+
 export interface BossDef {
   hp: number;
   dmg: number;
@@ -184,6 +198,19 @@ export interface BossDef {
   radius: number;
   look: BossLook;
   pattern: AttackSpec[];
+  /** Escalated Phase 2 attack cycle unlocked below 50% HP. */
+  phase2Pattern?: AttackSpec[];
+  /** Distance beyond which the boss breaks into a full sprint. */
+  sprintDist?: number;
+  /** Preferred spacing distance below which zoner/agile bosses backstep or kite. */
+  kiteDist?: number;
+  /** Chance (0..1) to reactively evade when the hero winds up close. */
+  dodgeChance?: number;
+  /** Minimum seconds between reactive dodges. */
+  dodgeCd?: number;
+  dodgeStyle?: BossDodgeStyle;
+  /** Poise damage multiplier (e.g. < 1 for heavy armored bosses). */
+  poiseMult?: number;
 }
 
 // ---------- World ----------

@@ -30,8 +30,12 @@ export class Telegraph {
     const r = e.radius;
     switch (a.k) {
       case "cone":
+      case "combo":
         return `c${a.range ?? 2.3}:${a.half ?? 0.8}:${r}`;
+      case "blink":
+        return e.blinked ? `b${a.range ?? 3.0}:${a.half ?? 1.25}:${r}` : "r";
       case "slam":
+      case "leap":
         return `s${a.r ?? 2.6}`;
       case "charge":
         return `h${(a.dist ?? 4.8) + r}:${a.width ?? 0.9}`;
@@ -49,8 +53,13 @@ export class Telegraph {
     const r = e.radius;
     switch (a.k) {
       case "cone":
+      case "combo":
         return { geo: new THREE.CircleGeometry((a.range ?? 2.3) + r, 28, -(a.half ?? 0.8), (a.half ?? 0.8) * 2), stretch: false };
+      case "blink":
+        if (!e.blinked) return { geo: new THREE.RingGeometry(1.15, 1.45, 36), stretch: false };
+        return { geo: new THREE.CircleGeometry((a.range ?? 3.0) + r, 28, -(a.half ?? 1.25), (a.half ?? 1.25) * 2), stretch: false };
       case "slam":
+      case "leap":
         return { geo: new THREE.CircleGeometry(a.r ?? 2.6, 40), stretch: false };
       case "charge": {
         const len = (a.dist ?? 4.8) + r;
@@ -93,7 +102,11 @@ export class Telegraph {
       this.outline.rotation.x = this.fill.rotation.x = -Math.PI / 2;
     }
     this.group.visible = true;
-    this.group.position.set(e.x, 0, e.y);
+    if (e.atk.k === "leap" && e.leapX !== undefined && e.leapY !== undefined) {
+      this.group.position.set(e.leapX, 0, e.leapY);
+    } else {
+      this.group.position.set(e.x, 0, e.y);
+    }
     this.group.rotation.y = -e.aim;
     const perilous = !!e.atk.perilous;
     const c = perilous ? ORANGE : RED;

@@ -772,7 +772,7 @@ export class Renderer {
       seen.add(e.id);
       let v = this.enemies.get(e.id);
       if (!v) {
-        const look = e.boss ? bossLook(e) : e.decoy ? bossLook({ ...e, boss: general.boss }) : enemyLook(e, e.beast);
+        const look = e.boss || e.decoy ? bossLook(e.decoy && !e.bossStyle ? { ...e, boss: general.boss } : e) : enemyLook(e, e.beast);
         v = this.makeChar(`${e.id}`, buildRig(look), !!e.boss || e.elite || e.decoy, true);
         this.enemies.set(e.id, v);
       }
@@ -784,9 +784,17 @@ export class Renderer {
         continue;
       }
       const ep = enemyPose(e, this.time, this.stride(v, e, dt));
-      const moving = ["patrol", "search", "chase", "circle", "home"].includes(e.state);
-      this.move(v, e, e.state === "windup" ? e.aim : e.facing, moving ? (e.state === "chase" ? e.speed : e.speed * 0.4) : 0, ep.pose, dt, e.state === "windup" || e.state === "recover" ? 22 : 12);
-      applyPose(v.rig, ep.pose, dt, e.state === "recover" ? 32 : 20);
+      const moving = ["patrol", "search", "chase", "sprint", "dodge", "circle", "home"].includes(e.state);
+      const moveSp =
+        e.state === "sprint"
+          ? e.speed * (e.phase2 ? 1.65 : 1.52)
+          : e.state === "dodge"
+            ? e.dodgeSpeed * 0.8
+            : e.state === "chase"
+              ? e.speed
+              : e.speed * 0.4;
+      this.move(v, e, e.state === "windup" ? e.aim : e.facing, moving ? moveSp : 0, ep.pose, dt, e.state === "windup" || e.state === "recover" || e.state === "dodge" ? 22 : 12);
+      applyPose(v.rig, ep.pose, dt, e.state === "recover" || e.state === "dodge" ? 32 : 20);
       setFlash(v.rig, e.flash > 0 ? e.flash * 6 : 0);
       for (const m of v.rig.glow) m.emissiveIntensity = v.rig.look.eyeGlow * (1 + ep.telegraph * 2.5) * (e.state === "dead" ? Math.max(0, 1 - e.deadT) : 1);
       if (v.rig.weapon?.laser) v.rig.weapon.laser.visible = ep.laser;
@@ -900,7 +908,8 @@ export class Renderer {
       if (glow) glow.material = s.pull ? this.shotPullGlowMat : this.shotGlowMat;
       m.position.set(s.x, 1.25, s.y);
       m.rotation.y = -Math.atan2(s.vy, s.vx);
-      m.scale.set(s.pull ? 0.7 : 1, s.pull ? 2.6 : 1.15, s.pull ? 2.6 : 1.15);
+      if (s.blade) m.scale.set(0.65, 0.35, 3.8);
+      else m.scale.set(s.pull ? 0.7 : 1, s.pull ? 2.6 : 1.15, s.pull ? 2.6 : 1.15);
     }
   }
 

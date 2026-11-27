@@ -280,6 +280,14 @@ export const GHOST_WANDER_LINES: readonly GhostExchange[] = [
   },
 ];
 
+export const BOSS_INTRO_LINES: Record<NationId, { speaker: string; text: string }> = {
+  reeds: { speaker: "The Ox", text: "Step onto the planks, little shell. Let's hear your bones crack like oak!" },
+  snow: { speaker: "The Bell", text: "Come forward, apostate. The cathedral bell tolls only for judgment!" },
+  tides: { speaker: "The Tide", text: "Still chasing ghosts across my harbor? Let the water claim the last of you!" },
+  lanterns: { speaker: "The Mask", text: "Ah, the final brother steps onstage. Tell me—which blade is real?" },
+  ash: { speaker: "Genryu", text: "Draw your steel, Ren. Let's see what remains of my finest student." },
+};
+
 export const BOSS_PHASE2_LINES: Record<NationId, { speaker: string; text: string; reply: string }> = {
   reeds: {
     speaker: "The Ox",
@@ -310,12 +318,116 @@ export const BOSS_PHASE2_LINES: Record<NationId, { speaker: string; text: string
 
 export const BOSS_MASK_DECOY_LINE = "Which shadow is real, ronin? Look behind you!";
 
-export const BOSS_HIT_TAUNTS: Record<NationId, { speaker: string; text: string }> = {
-  reeds: { speaker: "The Ox", text: "Ha! Your shell cracks like cheap pine!" },
-  snow: { speaker: "The Bell", text: "Kneel before judgment, heretic!" },
-  tides: { speaker: "The Tide", text: "Slow! The harbor swallows softer blades than yours!" },
-  lanterns: { speaker: "The Mask", text: "Too predictable, little brother!" },
-  ash: { speaker: "Genryu", text: "You hesitate, Ren! Rage blinds your footwork!" },
+export const BOSS_HIT_TAUNTS: Record<NationId, { speaker: string; lines: readonly string[] }> = {
+  reeds: {
+    speaker: "The Ox",
+    lines: [
+      "Ha! Your shell cracks like cheap pine!",
+      "Stand your ground and take the iron, worm!",
+      "Daigo broke under that club—and so will you!",
+    ],
+  },
+  snow: {
+    speaker: "The Bell",
+    lines: [
+      "Kneel before judgment, heretic!",
+      "Repent in ash and frost!",
+      "Sinners do not stand in heaven's light!",
+    ],
+  },
+  tides: {
+    speaker: "The Tide",
+    lines: [
+      "Slow! The harbor swallows softer blades than yours!",
+      "Caught in the undertow, little turtle!",
+      "My chains bite deeper than the winter sea!",
+    ],
+  },
+  lanterns: {
+    speaker: "The Mask",
+    lines: [
+      "Too predictable, little brother!",
+      "Look left, look right—you're fighting ghosts!",
+      "What a clumsy performance! Give me a real duel!",
+    ],
+  },
+  ash: {
+    speaker: "Genryu",
+    lines: [
+      "You hesitate, Ren! Rage blinds your footwork!",
+      "I taught you better guard than that!",
+      "Sloppy! Emotion will put you in the dirt!",
+    ],
+  },
+};
+
+export const BOSS_EVADE_LINES: Record<NationId, { speaker: string; text: string }> = {
+  reeds: { speaker: "The Ox", text: "Missed! Keep dancing, turtle!" },
+  snow: { speaker: "The Bell", text: "Heaven turns aside your wrath!" },
+  tides: { speaker: "The Tide", text: "Like swinging at sea foam!" },
+  lanterns: { speaker: "The Mask", text: "Did you think I was standing there?" },
+  ash: { speaker: "Genryu", text: "Too telegraphed, boy!" },
+};
+
+export const BOSS_DEFLECT_LINE = {
+  speaker: "Genryu",
+  text: "Still water turns the blade—now taste your own opening!",
+} as const;
+
+export const BOSS_STAGGER_LINES: Record<NationId, { speaker: string; text: string }> = {
+  reeds: { speaker: "The Ox", text: "Ugh—heavy little bastard...!" },
+  snow: { speaker: "The Bell", text: "Impossible... the faith holds!" },
+  tides: { speaker: "The Tide", text: "Tch—don't get cocky, boy!" },
+  lanterns: { speaker: "The Mask", text: "Heh... sharp eyes after all!" },
+  ash: { speaker: "Genryu", text: "Good! Now strike like you mean it!" },
+};
+
+export const BOSS_SKILL_CALLOUTS: Record<NationId, { speaker: string; map: Record<string, string> }> = {
+  reeds: {
+    speaker: "The Ox",
+    map: {
+      "Earthshaker Leap": "Crush you flat!",
+      "Tectonic Crash": "Crush you flat!",
+      "Seismic Breaker": "Feel the sky fall!",
+      "Iron Club": "Feel the sky fall!",
+    },
+  },
+  snow: {
+    speaker: "The Bell",
+    map: {
+      "The Bell Tolls": "Hear the great bell ring!",
+      "Cathedral Resonance": "Hear the great bell ring!",
+      "Heaven's Descent": "Shatter beneath heaven's weight!",
+      "Naginata Cyclone": "Shatter beneath heaven's weight!",
+    },
+  },
+  tides: {
+    speaker: "The Tide",
+    map: {
+      "Phantom Undertow": "Nowhere to run on my deck!",
+      "Harpoon Snare": "Nowhere to run on my deck!",
+      "Riptide Surge": "Nowhere to run on my deck!",
+      "Maelstrom Spin": "Drown in iron!",
+      "Drowning Flurry": "Drown in iron!",
+    },
+  },
+  lanterns: {
+    speaker: "The Mask",
+    map: {
+      "Stage Vanish": "Behind you, ronin!",
+      "Backstage Execution": "Behind you, ronin!",
+    },
+  },
+  ash: {
+    speaker: "Genryu",
+    map: {
+      "Phantom Flash": "Blink and die, Ren!",
+      "Iai Dash Cut": "Blink and die, Ren!",
+      "Helm Splitter": "Witness the Sword Saint's steel!",
+      "Thousand Cuts": "Witness the Sword Saint's steel!",
+      "Twin Vacuum Waves": "Witness the Sword Saint's steel!",
+    },
+  },
 };
 
 export const REN_PARRY_BOSS_LINES: readonly string[] = [

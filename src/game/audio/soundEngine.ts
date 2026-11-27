@@ -43,11 +43,6 @@ export type SfxKey =
   | "effortDeath"
   | "enemyAlert"
   | "enemyDie"
-  | "bossTauntOx"
-  | "bossTauntBell"
-  | "bossTauntTide"
-  | "bossTauntMask"
-  | "bossTauntGenryu"
   | "kusariSwing"
   | "kusariSnare"
   | "nunchakuSnap"
@@ -148,11 +143,6 @@ const SFX_URLS: Record<SfxKey, readonly string[]> = {
     "/assets/audio/vo-enemy-alert-3.mp3",
   ],
   enemyDie: ["/assets/audio/vo-enemy-die-1.mp3", "/assets/audio/vo-enemy-die-2.mp3"],
-  bossTauntOx: ["/assets/audio/vo-boss-ox.mp3"],
-  bossTauntBell: ["/assets/audio/vo-boss-bell.mp3"],
-  bossTauntTide: ["/assets/audio/vo-boss-tide.mp3"],
-  bossTauntMask: ["/assets/audio/vo-boss-mask.mp3"],
-  bossTauntGenryu: ["/assets/audio/vo-boss-genryu.mp3"],
   kusariSwing: ["/assets/audio/sfx-kusari-swing.mp3"],
   kusariSnare: ["/assets/audio/sfx-kusari-snare.mp3"],
   nunchakuSnap: ["/assets/audio/sfx-nunchaku-snap.mp3"],

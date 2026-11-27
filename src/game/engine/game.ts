@@ -1,11 +1,16 @@
-import { sound, type SfxKey } from "../audio/soundEngine";
+import { sound } from "../audio/soundEngine";
 import { MISSIONS } from "../data/missions";
 import { NATIONS } from "../data/nations";
 import {
   BIWA_AMBIENT_LINES,
+  BOSS_DEFLECT_LINE,
+  BOSS_EVADE_LINES,
   BOSS_HIT_TAUNTS,
+  BOSS_INTRO_LINES,
   BOSS_MASK_DECOY_LINE,
   BOSS_PHASE2_LINES,
+  BOSS_SKILL_CALLOUTS,
+  BOSS_STAGGER_LINES,
   ENEMY_BRUTE_LINES,
   ENEMY_GIVEUP_LINES,
   ENEMY_PANIC_LINES,
@@ -57,7 +62,7 @@ import {
 import { alert, makeBoss, makeEnemy, makeObject, updateEnemies } from "./enemies";
 import { Input, type Action } from "./input";
 import { hasParkourTargetAhead, moveBody3D, tryParkourJump, trySlideOrDrop, updateVerticalPhysics } from "./parkour";
-import { dist, inRect, segHitsRect, type Active, type Bubble, type Burst, type Enemy, type Floater, type Npc, type Pickup, type Player, type Rect, type Shot, type Vec, type Zone } from "./state";
+import { dist, inRect, segHitsRect, type Active, type Bubble, type Burst, type Enemy, type Floater, type Npc, type Pickup, type Player, type Rect, type Shockwave, type Shot, type Vec, type Zone } from "./state";
 import { buildZone } from "./world";
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -89,6 +94,7 @@ export class Game {
   player: Player;
   enemies: Enemy[] = [];
   shots: Shot[] = [];
+  shockwaves: Shockwave[] = [];
   npcs: Npc[] = [];
   pickups: Pickup[] = [];
   bursts: Burst[] = [];
@@ -144,6 +150,7 @@ export class Game {
   private fightT = 0;
   private wasHunted = false;
   private lastRenLine = "";
+  private lastBossLine = "";
   private lastNpcLine = "";
   private lastNpcSpeaker: Npc | null = null;
   private pendingLines: { t: number; line: string; on: Vec; priority: "mission" | "ambient"; waitVoice?: boolean }[] = [];
@@ -310,6 +317,7 @@ export class Game {
     this.refreshSolids();
     this.enemies = [];
     this.shots = [];
+    this.shockwaves = [];
     this.npcs = [];
     this.pickups = [];
     this.bubbles = [];
@@ -437,6 +445,7 @@ export class Game {
     }
     this.respawn();
     this.shots = [];
+    this.shockwaves = [];
   }
 
   // ---------- Missions ----------
@@ -462,6 +471,7 @@ export class Game {
     this.npcs = this.npcs.filter((n) => n.role !== "friend");
     this.pickups = [];
     this.shots = [];
+    this.shockwaves = [];
     if (this.lock && !this.enemies.includes(this.lock)) this.lock = null;
   }
 
@@ -912,23 +922,24 @@ export class Game {
 
   bossIntro(e: Enemy) {
     const g = NATIONS[this.zone.nation].general;
+    const intro = BOSS_INTRO_LINES[this.zone.nation];
     this.cinematic(2.4, e);
     this.slow(0.6);
     this.float(e, `${g.name}, ${g.title}`, "#e0102a", true);
     sound.playSfx("bossIntro", { volume: 1.0 });
-    const taunt: Record<NationId, SfxKey> = {
-      reeds: "bossTauntOx",
-      snow: "bossTauntBell",
-      tides: "bossTauntTide",
-      lanterns: "bossTauntMask",
-      ash: "bossTauntGenryu",
-    };
-    sound.playSfx(taunt[this.zone.nation], { volume: 0.98 });
+    this.bossTauntCd = this.time + 8;
     this.pendingLines.push({
-      t: 2.35,
+      t: 0.25,
+      line: `${intro.speaker}: ${intro.text}`,
+      on: e,
+      priority: "mission",
+    });
+    this.pendingLines.push({
+      t: 0.5,
       line: `Ren: ${REN_BOSS_LINES[this.zone.nation]}`,
       on: this.player,
       priority: "mission",
+      waitVoice: true,
     });
   }
 
@@ -1013,8 +1024,10 @@ export class Game {
     if (this.memory || p.hp <= 0) return;
     if (attacker?.boss && _taken >= 20 && this.time >= this.bossTauntCd && !sound.isVoicePlaying()) {
       const t = BOSS_HIT_TAUNTS[this.zone.nation];
-      if (this.say(`${t.speaker}: ${t.text}`, attacker, { priority: "ambient" })) {
-        this.bossTauntCd = this.time + 11;
+      const line = pickOther(t.lines, this.lastBossLine);
+      if (this.say(`${t.speaker}: ${line}`, attacker, { priority: "ambient" })) {
+        this.lastBossLine = line;
+        this.bossTauntCd = this.time + 10;
         return;
       }
     }
@@ -1029,6 +1042,7 @@ export class Game {
   onBossEnrage(boss: Enemy) {
     if (this.enragedBossId === boss.id) return;
     this.enragedBossId = boss.id;
+    this.bossTauntCd = Math.max(this.bossTauntCd, this.time + 8);
     const p2 = BOSS_PHASE2_LINES[this.zone.nation];
     this.float(boss, p2.speaker, "#ff4030", true);
     this.say(`${p2.speaker}: ${p2.text}`, boss, { priority: "mission" });
@@ -1039,6 +1053,39 @@ export class Game {
     if (this.time < this.bossTauntCd || sound.isVoicePlaying()) return;
     if (this.say(`The Mask: ${BOSS_MASK_DECOY_LINE}`, boss, { priority: "ambient" })) {
       this.bossTauntCd = this.time + 10;
+    }
+  }
+
+  onBossEvade(boss: Enemy) {
+    if (this.memory || this.cine || this.time < this.bossTauntCd || sound.isVoicePlaying()) return;
+    const line = BOSS_EVADE_LINES[this.zone.nation];
+    if (this.say(`${line.speaker}: ${line.text}`, boss, { priority: "ambient" })) {
+      this.bossTauntCd = this.time + 10;
+    }
+  }
+
+  onBossDeflect(boss: Enemy) {
+    if (this.memory || this.cine || this.time < this.bossTauntCd || sound.isVoicePlaying()) return;
+    if (this.say(`${BOSS_DEFLECT_LINE.speaker}: ${BOSS_DEFLECT_LINE.text}`, boss, { priority: "ambient" })) {
+      this.bossTauntCd = this.time + 10;
+    }
+  }
+
+  onBossStaggered(boss: Enemy) {
+    if (this.memory || this.cine || this.time < this.bossTauntCd || sound.isVoicePlaying()) return;
+    const line = BOSS_STAGGER_LINES[this.zone.nation];
+    if (this.say(`${line.speaker}: ${line.text}`, boss, { priority: "ambient" })) {
+      this.bossTauntCd = this.time + 10;
+    }
+  }
+
+  onBossSkill(boss: Enemy) {
+    if (this.memory || this.cine || this.time < this.bossTauntCd || sound.isVoicePlaying()) return;
+    const cfg = BOSS_SKILL_CALLOUTS[this.zone.nation];
+    const line = boss.atk.name ? cfg.map[boss.atk.name] : undefined;
+    if (!line) return;
+    if (this.say(`${cfg.speaker}: ${line}`, boss, { priority: "ambient" })) {
+      this.bossTauntCd = this.time + 12;
     }
   }
 
@@ -1464,26 +1511,42 @@ export class Game {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.life -= dt;
+      const projColor = s.blade ? 0xffe07a : s.pull ? 0xff2880 : 0xff7028;
       if (this.solids.some((r) => inRect(s, r))) {
         s.life = 0;
-        this.burst({ k: "spark", x: s.x, y: s.y, n: 5, dir: Math.atan2(-s.vy, -s.vx), color: s.pull ? 0xff2880 : 0xff7028 });
-        this.burst({ k: "ring", x: s.x, y: s.y, z: 1.0, n: 1, dir: 0, r: 0.85, color: s.pull ? 0xff2880 : 0xff7028 });
+        this.burst({ k: "spark", x: s.x, y: s.y, n: 5, dir: Math.atan2(-s.vy, -s.vx), color: projColor });
+        this.burst({ k: "ring", x: s.x, y: s.y, z: 1.0, n: 1, dir: 0, r: 0.85, color: projColor });
         continue;
       }
       if (dist(s, p) < PLAYER_R + s.r && p.z < 2.2 && !(p.act.kind === "slide" && p.act.t < 0.38)) {
         s.life = 0;
-        this.burst({ k: "spark", x: s.x, y: s.y, z: p.z, n: 6, dir: Math.atan2(-s.vy, -s.vx), color: s.pull ? 0xff2880 : 0xff7028 });
-        this.burst({ k: "ring", x: s.x, y: s.y, z: p.z + 1.0, n: 1, dir: 0, r: 1.05, color: s.pull ? 0xff2880 : 0xff7028 });
+        this.burst({ k: s.blade ? "slash" : "spark", x: s.x, y: s.y, z: p.z, n: s.blade ? 9 : 6, dir: Math.atan2(-s.vy, -s.vx), color: projColor });
+        this.burst({ k: "ring", x: s.x, y: s.y, z: p.z + 1.0, n: 1, dir: 0, r: s.blade ? 1.4 : 1.05, color: projColor });
         const before = p.hp;
         hurtPlayer(this, s.dmg, { x: s.sx, y: s.sy }, false, null);
         if (s.pull && p.hp < before && p.hp > 0) this.moveBody(p, (s.sx - p.x) * 0.6, (s.sy - p.y) * 0.6, PLAYER_R);
       } else if (friend && friend.hp > 0 && dist(s, friend) < 0.5 + s.r) {
         s.life = 0;
-        this.burst({ k: "spark", x: s.x, y: s.y, n: 5, dir: Math.atan2(-s.vy, -s.vx), color: s.pull ? 0xff2880 : 0xff7028 });
+        this.burst({ k: "spark", x: s.x, y: s.y, n: 5, dir: Math.atan2(-s.vy, -s.vx), color: projColor });
         friend.hp -= s.dmg * 0.6;
       }
     }
     this.shots = this.shots.filter((s) => s.life > 0);
+    for (const w of this.shockwaves) {
+      w.delay -= dt;
+      if (w.delay <= 0 && !w.hit) {
+        w.hit = true;
+        this.burst({ k: "ring", x: w.x, y: w.y, n: 1, dir: 0, r: w.maxR, color: w.color });
+        this.burst({ k: "dust", x: w.x, y: w.y, n: 16, dir: 0, r: w.maxR });
+        sound.playSfx("hitHeavy", { at: w, volume: 0.78 });
+        this.shake(0.24);
+        const dp = dist(w, p);
+        if (dp < w.maxR + PLAYER_R && dp > w.maxR * 0.32 && p.z < 0.68) {
+          hurtPlayer(this, w.dmg, w, w.perilous, w.owner);
+        }
+      }
+    }
+    this.shockwaves = this.shockwaves.filter((w) => !w.hit);
   }
 
   private npcCommentLine(n: Npc): string {

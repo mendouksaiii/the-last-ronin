@@ -98,6 +98,12 @@ export function makeEnemy(g: Game, arch: Archetype, at: Vec, o: SpawnOpts = {}):
     token: false,
     circleDir: Math.random() < 0.5 ? -1 : 1,
     killedBy: null,
+    dodgeCd: 0,
+    dodgeDir: 0,
+    dodgeInvuln: 0,
+    dodgeSpeed: 0,
+    comboLeft: 0,
+    phase2: false,
   };
 }
 
@@ -124,6 +130,7 @@ export function makeBoss(g: Game, at: Vec): Enemy {
     radius: def.radius,
     xp: Math.round(160 * (1 + 0.3 * s.lv)),
     boss: def,
+    bossStyle: def.look,
     atk: def.pattern[0],
     facing: Math.PI,
     state: "idle",
@@ -147,6 +154,7 @@ function makeDecoy(g: Game, boss: Enemy, at: Vec, aim: number): Enemy {
     speed: boss.speed * 1.1,
     xp: 0,
     boss: null,
+    bossStyle: boss.bossStyle,
     decoy: true,
     step: false,
     atk: ARCH.melee.atk,
@@ -165,7 +173,16 @@ function makeDecoy(g: Game, boss: Enemy, at: Vec, aim: number): Enemy {
     aware: true,
     maxPoise: 1,
     poise: 0,
+    dodgeCd: 99,
+    dodgeInvuln: 0,
+    comboLeft: 0,
+    phase2: false,
   };
+}
+
+function bossPattern(e: Enemy): AttackSpec[] {
+  const b = e.boss!;
+  return e.phase2 && b.phase2Pattern?.length ? b.phase2Pattern : b.pattern;
 }
 
 /** Alert an enemy, and nearby friends who hear the shout. */
@@ -199,33 +216,77 @@ function resolve(g: Game, e: Enemy) {
   const dmg = e.dmg * spec.dmg;
   const perilous = !!spec.perilous;
   switch (spec.k) {
-    case "cone": {
+    case "cone":
+    case "combo": {
+      if (spec.k === "combo") {
+        const step = spec.step ?? 1.0;
+        g.moveBody(e, Math.cos(e.aim) * step, Math.sin(e.aim) * step, e.radius, 0.15);
+        g.clampToArena(e);
+      }
       const range = spec.range ?? 2.3;
       const half = spec.half ?? 0.8;
-      sound.playSfx("swingLight", { at: e, volume: 0.72 });
+      sound.playSfx(spec.k === "combo" ? "swingHeavy" : "swingLight", { at: e, volume: 0.78 });
       g.burst({
         k: "slash",
         x: e.x,
         y: e.y,
-        n: perilous ? 9 : 6,
+        n: perilous ? 9 : 7,
         dir: e.aim,
-        r: Math.max(1.45, range * 0.68),
-        tilt: (e.id % 2 === 0 ? 1 : -1) * (perilous ? 0.25 : 0.42),
+        r: Math.max(1.5, range * 0.7),
+        tilt: ((e.id + e.comboLeft) % 2 === 0 ? 1 : -1) * (perilous ? 0.25 : 0.44),
         color: perilous ? 0xff4a18 : 0xc8102e,
       });
       g.hitFriends(e, (p, r) => dist(p, e) < range + r && angleDiff(Math.atan2(p.y - e.y, p.x - e.x), e.aim) < half, dmg, perilous);
       break;
     }
-    case "slam": {
+    case "blink": {
+      const range = spec.range ?? 3.0;
+      const half = spec.half ?? 1.25;
+      sound.playSfx("katanaFlash", { at: e, volume: 0.92 });
+      g.burst({
+        k: "slash",
+        x: e.x,
+        y: e.y,
+        n: 11,
+        dir: e.aim,
+        r: Math.max(1.8, range * 0.75),
+        tilt: 0.35,
+        color: 0xff3b1f,
+      });
+      g.burst({ k: "shadow", x: e.x, y: e.y, n: 10, dir: e.aim, r: 2.0, color: 0xd02050 });
+      g.hitFriends(e, (p, r) => dist(p, e) < range + r && angleDiff(Math.atan2(p.y - e.y, p.x - e.x), e.aim) < half, dmg, perilous);
+      break;
+    }
+    case "slam":
+    case "leap": {
+      if (spec.k === "leap" && e.leapX !== undefined && e.leapY !== undefined) {
+        e.x = e.leapX;
+        e.y = e.leapY;
+        g.clampToArena(e);
+      }
       const r = spec.r ?? 2.6;
       if (e.boss && g.zone.nation === "snow") sound.playSfx("bellToll", { at: e, volume: 0.98 });
-      sound.playSfx("hitHeavy", { at: e, volume: 0.92 });
+      sound.playSfx(spec.k === "leap" ? "boSlam" : "hitHeavy", { at: e, volume: 0.95 });
       g.hitFriends(e, (p, pr) => dist(p, e) < r + pr, dmg, perilous);
       g.burst({ k: "ring", x: e.x, y: e.y, n: 1, dir: 0, r, color: perilous ? 0xff4a18 : 0xe0303a });
-      g.burst({ k: "spark", x: e.x, y: e.y, n: 10, dir: 0, color: 0xff7828 });
-      g.burst({ k: "ripple", x: e.x, y: e.y, n: 6, dir: 0, r: r * 0.7 });
-      g.burst({ k: "dust", x: e.x, y: e.y, n: 18, dir: 0, r });
-      g.shake(0.35);
+      g.burst({ k: "spark", x: e.x, y: e.y, n: 12, dir: 0, color: 0xff7828 });
+      g.burst({ k: "ripple", x: e.x, y: e.y, n: 7, dir: 0, r: r * 0.75 });
+      g.burst({ k: "dust", x: e.x, y: e.y, n: 22, dir: 0, r: r * 1.1 });
+      g.shake(spec.k === "leap" ? 0.45 : 0.35);
+      if ((spec.waves ?? 1) >= 2) {
+        g.shockwaves.push({
+          x: e.x,
+          y: e.y,
+          delay: 0.42,
+          r: r * 0.85,
+          maxR: r * 1.78,
+          dmg: dmg * 0.75,
+          perilous: true,
+          color: 0xff8020,
+          owner: e,
+          hit: false,
+        });
+      }
       break;
     }
     case "charge": {
@@ -246,12 +307,25 @@ function resolve(g: Game, e: Enemy) {
       const speed = spec.speed ?? 18;
       const mx = e.x + Math.cos(e.aim) * 0.65;
       const my = e.y + Math.sin(e.aim) * 0.65;
-      sound.playSfx("bowShot", { at: e, volume: 0.85 });
-      g.burst({ k: "spark", x: mx, y: my, n: 5, dir: e.aim, color: spec.pull ? 0xff2880 : 0xff7028 });
-      g.burst({ k: "ring", x: mx, y: my, z: 1.05, n: 1, dir: e.aim, r: 0.9, color: spec.pull ? 0xff2880 : 0xff7028 });
+      sound.playSfx(spec.blade ? "katanaFlash" : "bowShot", { at: e, volume: 0.85 });
+      const shotColor = spec.blade ? 0xffe07a : spec.pull ? 0xff2880 : 0xff7028;
+      g.burst({ k: spec.blade ? "slash" : "spark", x: mx, y: my, n: spec.blade ? 8 : 5, dir: e.aim, color: shotColor });
+      g.burst({ k: "ring", x: mx, y: my, z: 1.05, n: 1, dir: e.aim, r: 0.9, color: shotColor });
       for (let i = 0; i < count; i++) {
         const a = e.aim + (count > 1 ? (spec.spread ?? 0) * (i / (count - 1) - 0.5) : 0);
-        g.shots.push({ x: e.x, y: e.y, sx: e.x, sy: e.y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, dmg, life: 1.4, pull: !!spec.pull, r: spec.pull ? 0.35 : 0.25 });
+        g.shots.push({
+          x: e.x,
+          y: e.y,
+          sx: e.x,
+          sy: e.y,
+          vx: Math.cos(a) * speed,
+          vy: Math.sin(a) * speed,
+          dmg,
+          life: 1.4,
+          pull: !!spec.pull,
+          blade: !!spec.blade,
+          r: spec.blade ? 0.72 : spec.pull ? 0.35 : 0.25,
+        });
       }
       break;
     }
@@ -362,9 +436,90 @@ function turn(e: Enemy, to: number, rate: number) {
   e.facing += Math.max(-rate, Math.min(rate, diff));
 }
 
+function tryBossDodge(g: Game, e: Enemy, d: number, dx: number, dy: number): boolean {
+  const b = e.boss;
+  if (!b || b.dodgeStyle === "none" || e.dodgeCd > 0) return false;
+  const p = g.player;
+  const threatened = p.act.kind === "attack" && p.act.t < 0.16 && d < 4.6;
+  const tooClose = !!b.kiteDist && d < b.kiteDist && e.cd > 0.12;
+  if (!threatened && !tooClose) return false;
+  const chance = threatened ? (b.dodgeChance ?? 0.5) : 0.65;
+  if (Math.random() > chance) return false;
+
+  const toPlayer = Math.atan2(dy, dx);
+  const style = b.dodgeStyle ?? "sidestep";
+  const side = e.circleDir || 1;
+  e.circleDir *= -1;
+  let dir = toPlayer + Math.PI;
+  let dur = 0.32;
+  let sp = 10.5;
+  if (style === "backstep") {
+    dir = toPlayer + Math.PI + (Math.random() - 0.5) * 0.4;
+    dur = 0.34;
+    sp = 10.2;
+    g.burst({ k: "dust", x: e.x, y: e.y, n: 8, dir: toPlayer, r: 1.0 });
+  } else if (style === "shadow") {
+    dir = toPlayer + side * (Math.PI * 0.62);
+    dur = 0.3;
+    sp = 13.0;
+    g.burst({ k: "shadow", x: e.x, y: e.y, n: 12, dir: 0, r: 2.0, color: 0xd02050 });
+    const liveDecoys = g.enemies.filter((o) => o.decoy && o.state !== "dead").length;
+    if (liveDecoys < 2) {
+      const dec = makeDecoy(g, e, { x: e.x, y: e.y }, toPlayer);
+      g.clampToArena(dec);
+      g.enemies.push(dec);
+    }
+  } else {
+    dir = threatened ? toPlayer + side * (Math.PI * 0.56) : toPlayer + Math.PI + side * 0.35;
+    dur = 0.3;
+    sp = 11.8;
+    g.burst({ k: "ripple", x: e.x, y: e.y, n: 5, dir: toPlayer, r: 1.05 });
+    g.burst({ k: "dust", x: e.x, y: e.y, n: 6, dir: dir + Math.PI, r: 0.8 });
+  }
+  e.state = "dodge";
+  e.t = e.tw = dur;
+  e.dodgeDir = dir;
+  e.dodgeSpeed = sp;
+  e.dodgeInvuln = dur * 0.85;
+  e.dodgeCd = b.dodgeCd ?? 2.6;
+  e.guardT = 0;
+  sound.playSfx("dodge", { at: e, volume: 0.78, jitter: 0.08 });
+  return true;
+}
+
+function beginWindup(g: Game, e: Enemy, d: number, dx: number, dy: number) {
+  const enrage = e.phase2 ? 0.82 : 1;
+  e.state = "windup";
+  e.t = e.tw = e.atk.windup * enrage * (e.boss ? 0.9 : 1);
+  e.aim = Math.atan2(dy, dx);
+  e.facing = e.aim;
+  e.blinked = false;
+  if (e.atk.k === "combo") e.comboLeft = Math.max(0, (e.atk.hits ?? 3) - 1);
+  else e.comboLeft = 0;
+  if (e.atk.k === "leap") {
+    const leapDist = Math.min(d, e.atk.reach);
+    e.leapStartX = e.x;
+    e.leapStartY = e.y;
+    const tx = e.x + Math.cos(e.aim) * leapDist;
+    const ty = e.y + Math.sin(e.aim) * leapDist;
+    const tmp = { ...e, x: tx, y: ty };
+    g.clampToArena(tmp);
+    e.leapX = tmp.x;
+    e.leapY = tmp.y;
+    g.burst({ k: "dust", x: e.x, y: e.y, n: 8, dir: e.aim + Math.PI, r: 0.9 });
+  }
+  if (e.atk.perilous) {
+    sound.playSfx("peril", { at: e, volume: 0.9 });
+    if (e.arch === "brute" && !e.boss) g.onEnemyBruteCry(e);
+  }
+  if (e.boss) g.onBossSkill(e);
+}
+
 function updateEnemy(g: Game, e: Enemy, dt: number) {
   e.flash = Math.max(0, e.flash - dt);
   e.guardT = Math.max(0, e.guardT - dt);
+  e.dodgeCd = Math.max(0, e.dodgeCd - dt);
+  e.dodgeInvuln = Math.max(0, e.dodgeInvuln - dt);
   if (e.state === "dead") {
     e.deadT += dt;
     // The body is carried on by the killing blow before it drops.
@@ -392,6 +547,18 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
   const dx = tgt.x - e.x;
   const dy = tgt.y - e.y;
   const d = Math.hypot(dx, dy) || 1;
+
+  // Phase 2 transition: unlock signature escalated moves and burst aura.
+  if (e.boss && !e.phase2 && e.hp < e.maxHp * 0.5) {
+    e.phase2 = true;
+    g.onBossEnrage(e);
+    const pat = bossPattern(e);
+    e.atkIdx = 0;
+    e.atk = pat[0];
+    e.cd = Math.min(e.cd, 0.2);
+    g.burst({ k: "shadow", x: e.x, y: e.y, n: 16, dir: 0, r: 3.4, color: 0xff4028 });
+    g.burst({ k: "ring", x: e.x, y: e.y, n: 1, dir: 0, r: 4.5, color: 0xff5a1f });
+  }
 
   // Perception while unaware.
   if (!e.aware) {
@@ -458,6 +625,23 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
       }
       break;
     }
+    case "dodge": {
+      const k = Math.max(0, e.t / Math.max(0.01, e.tw));
+      const sp = e.dodgeSpeed * (0.35 + k * 0.9);
+      steerStep(g, e, e.dodgeDir, sp * dt);
+      g.clampToArena(e);
+      turn(e, Math.atan2(dy, dx), dt * 14);
+      e.walk += sp * dt;
+      e.t -= dt;
+      if (e.t <= 0) {
+        e.state = "chase";
+        e.dodgeInvuln = 0;
+        e.cd = Math.min(e.cd, 0.22);
+        e.chaseT = 0;
+      }
+      break;
+    }
+    case "sprint":
     case "chase":
     case "circle": {
       if (e.camp >= 0 && dist(e, e.home) > 38) {
@@ -465,31 +649,33 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
         e.token = false;
         break;
       }
-      turn(e, Math.atan2(dy, dx), dt * (e.boss ? 5 : 7));
+      turn(e, Math.atan2(dy, dx), dt * (e.boss ? 6.5 : 7));
+      if (tryBossDodge(g, e, d, dx, dy)) break;
+
       e.chaseT += dt;
       // A general who cannot reach the hero moves on to the next attack.
-      if (e.boss && e.chaseT > 2.2) {
-        e.atkIdx = (e.atkIdx + 1) % e.boss.pattern.length;
-        e.atk = e.boss.pattern[e.atkIdx];
+      if (e.boss && e.chaseT > 2.0) {
+        const pat = bossPattern(e);
+        e.atkIdx = (e.atkIdx + 1) % pat.length;
+        e.atk = pat[e.atkIdx];
         e.chaseT = 0;
       }
-      if (e.boss && e.hp < e.maxHp * 0.5) g.onBossEnrage(e);
       const mayAttack = e.boss || e.decoy || e.token || tgt !== p;
       e.cd -= dt;
       if (mayAttack && d < e.atk.reach + e.radius && e.cd <= 0) {
-        const enrage = e.boss && e.hp < e.maxHp * 0.5 ? 0.8 : 1;
-        e.state = "windup";
-        e.t = e.tw = e.atk.windup * enrage * (e.boss ? 0.88 : 1);
-        e.aim = Math.atan2(dy, dx);
-        e.facing = e.aim;
-        if (e.atk.perilous) {
-          sound.playSfx("peril", { at: e, volume: 0.9 });
-          if (e.arch === "brute" && !e.boss) g.onEnemyBruteCry(e);
-        }
+        beginWindup(g, e, d, dx, dy);
         break;
       }
       const ranged = e.arch === "ranged" && !e.boss;
-      if (!mayAttack || (ranged && d < 6)) {
+      const sprintAt = e.boss?.sprintDist ?? 99;
+      if (e.boss && d > sprintAt) {
+        e.state = "sprint";
+        const sp = e.speed * (e.phase2 ? 1.65 : 1.52);
+        steerStep(g, e, Math.atan2(dy, dx), sp * dt);
+        g.clampToArena(e);
+        e.walk += sp * dt * 1.15;
+        if (Math.random() < dt * 9) g.burst({ k: "dust", x: e.x, y: e.y, n: 2, dir: e.facing + Math.PI, r: 0.45 });
+      } else if (!mayAttack || (ranged && d < 6)) {
         // Hold a ring around the hero, sidestepping, until it is our turn.
         e.state = "circle";
         const want = ranged ? 8 : 4.2;
@@ -504,36 +690,84 @@ function updateEnemy(g: Game, e: Enemy, dt: number) {
         if (Math.random() < dt * 0.25) e.circleDir *= -1;
       } else {
         e.state = "chase";
-        const sp = e.speed * (d > 8 ? 1 : 0.75);
+        const sp = e.speed * (d > 7 ? 1.05 : 0.82);
         steerStep(g, e, Math.atan2(dy, dx), sp * dt);
+        if (e.boss) g.clampToArena(e);
         e.walk += sp * dt;
       }
       break;
     }
-    case "windup":
+    case "windup": {
       e.t -= dt;
+      const k = 1 - Math.max(0, e.t) / Math.max(0.01, e.tw);
       if (e.atk.k === "charge" && Math.random() < dt * 10) {
         g.burst({ k: "dust", x: e.x, y: e.y, n: 2, dir: e.aim + Math.PI, r: 0.45 });
       }
-      // Light attackers track the hero during the first half of the windup.
-      if (e.t > e.tw * 0.5 && e.atk.k !== "charge") e.aim = e.facing = Math.atan2(dy, dx);
+      if (e.atk.k === "leap" && e.leapX !== undefined && e.leapY !== undefined && e.leapStartX !== undefined && e.leapStartY !== undefined) {
+        if (k < 0.28) {
+          e.aim = e.facing = Math.atan2(dy, dx);
+          const leapDist = Math.min(d, e.atk.reach);
+          const tmp = { ...e, x: e.leapStartX + Math.cos(e.aim) * leapDist, y: e.leapStartY + Math.sin(e.aim) * leapDist };
+          g.clampToArena(tmp);
+          e.leapX = tmp.x;
+          e.leapY = tmp.y;
+        } else {
+          const fly = Math.min(1, (k - 0.28) / 0.72);
+          e.x = e.leapStartX + (e.leapX - e.leapStartX) * fly;
+          e.y = e.leapStartY + (e.leapY - e.leapStartY) * fly;
+          g.clampToArena(e);
+        }
+      } else if (e.atk.k === "blink") {
+        if (!e.blinked && k >= 0.5) {
+          e.blinked = true;
+          g.burst({ k: "shadow", x: e.x, y: e.y, n: 12, dir: 0, r: 2.0, color: 0xd02050 });
+          if (e.atk.leaveDecoy) {
+            const dec = makeDecoy(g, e, { x: e.x, y: e.y }, e.aim);
+            g.clampToArena(dec);
+            g.enemies.push(dec);
+          }
+          e.x = p.x - Math.cos(p.facing) * 1.95;
+          e.y = p.y - Math.sin(p.facing) * 1.95;
+          g.clampToArena(e);
+          e.aim = e.facing = Math.atan2(p.y - e.y, p.x - e.x);
+          g.burst({ k: "shadow", x: e.x, y: e.y, n: 12, dir: e.aim, r: 2.0, color: 0xff4a18 });
+          sound.playSfx("dodge", { at: e, volume: 0.9 });
+        }
+      } else if (e.t > e.tw * 0.5 && e.atk.k !== "charge") {
+        e.aim = e.facing = Math.atan2(dy, dx);
+      }
       if (e.t <= 0) {
         resolve(g, e);
+        if (e.comboLeft > 0 && p.hp > 0) {
+          e.comboLeft--;
+          e.t = e.tw = e.phase2 ? 0.22 : 0.26;
+          e.aim = e.facing = Math.atan2(p.y - e.y, p.x - e.x);
+          break;
+        }
         e.state = "recover";
-        e.t = e.boss ? 0.6 : 0.42;
-        e.cd = e.boss ? 0.3 : ARCH[e.arch].cd * (0.8 + Math.random() * 0.5);
+        e.t = e.boss ? (e.phase2 ? 0.48 : 0.58) : 0.42;
+        e.cd = e.boss ? (e.phase2 ? 0.18 : 0.28) : ARCH[e.arch].cd * (0.8 + Math.random() * 0.5);
         e.token = false;
         if (e.boss) {
-          e.atkIdx = (e.atkIdx + 1) % e.boss.pattern.length;
-          e.atk = e.boss.pattern[e.atkIdx];
+          const pat = bossPattern(e);
+          e.atkIdx = (e.atkIdx + 1) % pat.length;
+          e.atk = pat[e.atkIdx];
         }
       }
       break;
+    }
     case "recover":
+      if (e.t < 0.25 && tryBossDodge(g, e, d, dx, dy)) break;
+      e.t -= dt;
+      if (e.t <= 0) {
+        e.state = "chase";
+        e.chaseT = 0;
+      }
+      break;
     case "stagger":
       e.t -= dt;
       if (e.t <= 0) {
-        if (e.state === "stagger") e.poise = 0;
+        e.poise = 0;
         e.state = "chase";
         e.chaseT = 0;
       }

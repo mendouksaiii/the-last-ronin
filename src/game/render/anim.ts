@@ -68,19 +68,33 @@ export function enemyLook(e: Enemy, beast: boolean): Look {
 }
 
 export function bossLook(e: Enemy): Look {
-  const look = e.boss?.look ?? "ox";
-  const base: Look = { skin: 0x7a6250, cloth: fatigue(e.color), accent: 0xa00e18, scale: 1.2, bulk: 1.2, head: "oni", gear: "katana", eyes: 0xff3a1a, eyeGlow: 3, skirt: 0.6, outfit: "tactical", cape: 0x9a0c16, seed: e.id + 1 };
+  const look = e.bossStyle ?? e.boss?.look ?? "ox";
+  const base: Look = {
+    skin: 0x7a6250,
+    cloth: fatigue(e.color),
+    accent: 0xa00e18,
+    scale: 1.2,
+    bulk: 1.2,
+    head: "oni",
+    gear: "katana",
+    eyes: 0xff3a1a,
+    eyeGlow: 3,
+    skirt: 0.6,
+    outfit: look,
+    cape: 0x9a0c16,
+    seed: e.id + 1,
+  };
   switch (look) {
     case "ox":
-      return { ...base, scale: 1.65, bulk: 1.55, head: "helmet", gear: "club", skirt: 0.5 };
+      return { ...base, scale: 1.68, bulk: 1.56, head: "helmet", gear: "club", cloth: 0x201818, accent: 0x8a141c, skirt: 0.45, eyes: 0xff4a18, cape: 0x4e0c10, outfit: "ox" };
     case "bell":
-      return { ...base, scale: 1.25, bulk: 1.1, head: "monk", gear: "naginata", skirt: 0.85, eyes: 0xffa040 };
+      return { ...base, scale: 1.28, bulk: 1.12, head: "monk", gear: "naginata", cloth: 0x262220, accent: 0xb86416, skirt: 0.88, eyes: 0xffaa30, cape: 0x6a1c14, outfit: "bell" };
     case "tide":
-      return { ...base, scale: 1.12, bulk: 0.95, head: "kerchief", gear: "sickle", skirt: 0.7, accent: 0x8a1a1a };
+      return { ...base, scale: 1.12, bulk: 0.92, head: "kerchief", gear: "sickle", cloth: 0x162534, accent: 0xa41624, skirt: 0.78, eyes: 0x48e0ff, eyeGlow: 2.8, cape: 0x0e1824, outfit: "tide" };
     case "mask":
-      return { ...base, scale: 1.12, bulk: 0.95, head: "mask", gear: "knives", offGear: "knives", skirt: 0.8 };
+      return { ...base, scale: 1.12, bulk: 0.94, head: "mask", gear: "knives", offGear: "knives", cloth: 0x121016, accent: 0xb01228, skirt: 0.82, eyes: 0xff2878, eyeGlow: 3.4, cape: 0x700c1e, outfit: "mask" };
     case "genryu":
-      return { ...base, scale: 1.1, bulk: 1, head: "hair", gear: "katana", skirt: 0.75, cloth: 0x2a2826, accent: 0x9a9286, eyes: 0xd8d0c0, eyeGlow: 0.8, outfit: undefined, cape: 0x1a1a1c };
+      return { ...base, scale: 1.12, bulk: 1.02, head: "hair", gear: "katana", skirt: 0.84, cloth: 0x242328, accent: 0x9a1820, eyes: 0xeae2d2, eyeGlow: 0.8, cape: 0x16161a, outfit: "genryu" };
   }
 }
 
@@ -839,8 +853,11 @@ const E_IDLE: Key = { armR: [-0.15, 0.12, -0.3], armL: [-0.1, 0.12, -0.3] };
 export function enemyPose(e: Enemy, time: number, phase: number): { pose: Pose; laser: boolean; telegraph: number; trail: boolean } {
   let pose = restPose();
   const ranged = e.arch === "ranged" && !e.boss;
-  const alert = e.aware;
-  pose = mixPose(pose, alert ? (ranged ? E_AIM : E_GUARD) : E_IDLE, 1);
+  const isAlert = e.aware;
+  pose = mixPose(pose, isAlert ? (ranged ? E_AIM : E_GUARD) : E_IDLE, 1);
+  if (isAlert && e.bossStyle === "genryu") pose = mixPose(pose, GUARD.katana, 0.65);
+  else if (isAlert && e.bossStyle === "mask") pose = mixPose(pose, { crouch: 0.2, lean: 0.24, armR: [-0.4, 0.25, -1.2], armL: [-0.4, -0.25, -1.2] }, 0.75);
+  else if (isAlert && e.bossStyle === "tide") pose = mixPose(pose, { crouch: 0.14, twist: -0.22, gearA: 0.65 }, 0.7);
   pose.lean += Math.sin(time * 2 + e.id) * 0.02;
   let laser = false;
   let telegraph = 0;
@@ -851,34 +868,81 @@ export function enemyPose(e: Enemy, time: number, phase: number): { pose: Pose; 
     return { pose: deathPose(pose, e.deadT, fall, e.id % 2 ? 1 : -1), laser, telegraph, trail };
   }
 
-  const moving = ["patrol", "search", "chase", "circle", "home"].includes(e.state);
+  const moving = ["patrol", "search", "chase", "sprint", "circle", "home"].includes(e.state);
   if (moving) {
-    const speed = e.state === "chase" ? e.speed : e.speed * 0.4;
-    const legs = Math.min(1, speed / 4.5) * (e.state === "chase" ? 0.92 : 0.6);
-    pose = gait(pose, legs, phase, alert ? [0.15, 0.35] : [0.4, 0.45]);
-    if (e.state === "chase") pose.lean += 0.22;
+    const isSprint = e.state === "sprint";
+    const speed = isSprint ? e.speed * 1.55 : e.state === "chase" ? e.speed : e.speed * 0.4;
+    const legs = isSprint ? 1.0 : Math.min(1, speed / 4.5) * (e.state === "chase" ? 0.92 : 0.6);
+    pose = gait(pose, legs, phase, isSprint ? [0.35, 0.48] : isAlert ? [0.15, 0.35] : [0.4, 0.45]);
+    if (isSprint) pose.lean += 0.36;
+    else if (e.state === "chase") pose.lean += 0.22;
   }
-  pose.breath = Math.sin(time * (alert ? 4 : 2) + e.id);
-  if (!moving && !alert) pose.look = Math.sin(time * 0.4 + e.id * 1.7) * 0.35;
+  pose.breath = Math.sin(time * (isAlert ? 4 : 2) + e.id);
+  if (!moving && !isAlert) pose.look = Math.sin(time * 0.4 + e.id * 1.7) * 0.35;
   if (e.state === "search") pose.head = Math.sin(time * 1.5 + e.id) * 0.2;
 
+  if (e.state === "dodge") {
+    const k = 1 - Math.max(0, e.t) / Math.max(0.01, e.tw);
+    const rel = Math.atan2(Math.sin(e.dodgeDir - e.facing), Math.cos(e.dodgeDir - e.facing));
+    const arc = Math.sin(k * Math.PI);
+    if (Math.abs(rel) > 2.2) {
+      pose = mixPose(pose, { lean: -0.34, crouch: 0.42 * arc, drop: 0.16 * arc }, 1);
+    } else {
+      const s = rel >= 0 ? 1 : -1;
+      pose = mixPose(pose, { bank: s * 0.35 * arc, twist: -s * 0.42, crouch: 0.4 * arc, drop: 0.14 * arc }, 1);
+    }
+    return { pose, laser, telegraph, trail };
+  }
+
   const spec = e.atk;
+  const comboRight = (e.id + e.comboLeft) % 2 === 0;
   if (e.state === "windup") {
     const k = clamp01(1 - e.t / e.tw);
     telegraph = k;
     if (ranged || spec.k === "shots") {
       pose = mixPose(pose, { ...E_AIM, lean: -0.05 }, 1);
-      laser = true;
-    } else if (spec.k === "slam") pose = mixPose(pose, ANIM.overhead.wind, ease(k));
-    else if (spec.k === "charge") pose = mixPose(pose, { ...ANIM.thrust.wind, crouch: 0.45, lean: 0.35 }, ease(k));
-    else if (spec.k === "summon" || spec.k === "decoys") pose = mixPose(pose, { armR: [-2.9, 0.3, -0.2], armL: [-2.9, 0.3, -0.2], head: -0.3 }, ease(k));
-    else if (spec.k === "guard") pose = mixPose(pose, ANIM.draw.wind, ease(k));
-    else pose = mixPose(pose, ANIM.slashR.wind, ease(k));
+      laser = !spec.blade;
+    } else if (spec.k === "slam") {
+      pose = mixPose(pose, ANIM.overhead.wind, ease(k));
+    } else if (spec.k === "leap") {
+      if (k < 0.28) {
+        pose = mixPose(pose, { crouch: 0.55, lean: 0.35, ...ANIM.overhead.wind }, ease(k / 0.28));
+      } else {
+        const fly = clamp01((k - 0.28) / 0.72);
+        pose = mixPose(pose, {
+          ...ANIM.overhead.wind,
+          drop: Math.sin(fly * Math.PI) * 2.25,
+          lean: -0.1 + fly * 0.45,
+          legOv: 1,
+          legR: [-0.95, 1.55, -0.08],
+          legL: [-0.75, 1.35, 0.08],
+        }, 1);
+      }
+    } else if (spec.k === "charge" || spec.k === "blink") {
+      pose = mixPose(pose, { ...ANIM.thrust.wind, crouch: 0.45, lean: 0.38 }, ease(k));
+    } else if (spec.k === "summon" || spec.k === "decoys") {
+      pose = mixPose(pose, { armR: [-2.9, 0.3, -0.2], armL: [-2.9, 0.3, -0.2], head: -0.3 }, ease(k));
+    } else if (spec.k === "guard") {
+      pose = mixPose(pose, ANIM.draw.wind, ease(k));
+    } else if (spec.k === "combo") {
+      pose = mixPose(pose, comboRight ? ANIM.slashR.wind : ANIM.slashL.wind, ease(k));
+    } else {
+      pose = mixPose(pose, ANIM.slashR.wind, ease(k));
+    }
     // A last shiver right before the blow.
-    if (k > 0.8) pose.twist += Math.sin(time * 60) * 0.03;
+    if (k > 0.8 && spec.k !== "leap") pose.twist += Math.sin(time * 60) * 0.03;
   } else if (e.state === "recover") {
     const k = clamp01(e.t / (e.boss ? 0.75 : 0.55));
-    const key = spec.k === "slam" ? ANIM.overhead.strike : spec.k === "charge" ? ANIM.thrust.strike : spec.k === "shots" ? E_AIM : ANIM.slashR.strike;
+    const key =
+      spec.k === "slam" || spec.k === "leap"
+        ? ANIM.overhead.strike
+        : spec.k === "charge"
+          ? ANIM.thrust.strike
+          : spec.k === "shots"
+            ? E_AIM
+            : spec.k === "combo" && !comboRight
+              ? ANIM.slashL.strike
+              : ANIM.slashR.strike;
     pose = mixPose(pose, key, k);
     trail = k > 0.75 && spec.k !== "shots";
   } else if (e.state === "stagger") {
